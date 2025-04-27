@@ -1,14 +1,10 @@
 import os
 import re
-import pytz
-from datetime import datetime
 from docx import Document
-import subprocess
-import logging
+from datetime import datetime
+import pytz
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Цвет текста в DOCX обычно через стили, оставляем базовый.
 
 def текущая_дата_лондон():
     return datetime.now(pytz.timezone("Europe/London")).strftime("%d.%m.%Y")
@@ -16,51 +12,34 @@ def текущая_дата_лондон():
 def очистить_имя_файла(text):
     return re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE).strip()
 
-def заменить_плейсхолдеры(doc: Document, текст: str, дата: str):
-    for параграф in doc.paragraphs:
-        if "Client:" in параграф.text:
-            параграф.text = параграф.text.replace("Client:", f"Client: {текст}")
-        if "Date:" in параграф.text:
-            параграф.text = параграф.text.replace("Date:", f"Date: {дата}")
-    for таблица in doc.tables:
-        for строка in таблица.rows:
-            for ячейка in строка.cells:
-                if "Client:" in ячейка.text:
-                    ячейка.text = ячейка.text.replace("Client:", f"Client: {текст}")
-                if "Date:" in ячейка.text:
-                    ячейка.text = ячейка.text.replace("Date:", f"Date: {дата}")
-
 def generate_pdf(путь_к_шаблону: str, текст: str) -> str:
     """
-    Заполняет DOCX шаблон, конвертирует его в PDF и сохраняет.
+    Заполняет DOCX шаблон пользовательским текстом и сохраняет в файл.
+    :param путь_к_шаблону: Путь к DOCX шаблону
+    :param текст: Имя клиента
+    :return: Путь к сгенерированному DOCX
     """
     дата = текущая_дата_лондон()
     имя_файла = очистить_имя_файла(текст) or "результат"
-    путь_к_docx = f"{имя_файла}.docx"
-    путь_к_pdf = f"{имя_файла}.pdf"
+    путь_к_выходному_файлу = f"{имя_файла}.docx"
 
-    try:
-        doc = Document(путь_к_шаблону)
-    except Exception as e:
-        logger.error(f"Ошибка открытия шаблона DOCX '{путь_к_шаблону}': {e}")
-        raise
+    doc = Document(путь_к_шаблону)
 
-    заменить_плейсхолдеры(doc, текст, дата)
+    for параграф in doc.paragraphs:
+        if "{CLIENT}" in параграф.text:
+            параграф.text = параграф.text.replace("{CLIENT}", текст)
+        if "{DATE}" in параграф.text:
+            параграф.text = параграф.text.replace("{DATE}", дата)
 
-    doc.save(путь_к_docx)
-    logger.info(f"DOCX файл сохранён: {путь_к_docx}")
+    # Также заменяем в таблицах
+    for таблица in doc.tables:
+        for строка in таблица.rows:
+            for ячейка in строка.cells:
+                if "{CLIENT}" in ячейка.text:
+                    ячейка.text = ячейка.text.replace("{CLIENT}", текст)
+                if "{DATE}" in ячейка.text:
+                    ячейка.text = ячейка.text.replace("{DATE}", дата)
 
-    try:
-        subprocess.run(
-            ["libreoffice", "--headless", "--convert-to", "pdf", путь_к_docx, "--outdir", "."],
-            check=True
-        )
-        logger.info(f"Преобразование в PDF успешно: {путь_к_pdf}")
-    except Exception as e:
-        logger.error(f"Ошибка конвертации DOCX в PDF: {e}")
-        raise
+    doc.save(путь_к_выходному_файлу)
 
-    if not os.path.exists(путь_к_pdf):
-        raise FileNotFoundError(f"Файл PDF '{путь_к_pdf}' не найден после конвертации.")
-
-    return путь_к_pdf
+    return путь_к_выходному_файлу
