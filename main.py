@@ -88,7 +88,7 @@ def main():
 
     # Проверка наличия шаблонов
     try:
-       # check_templates()
+        something = open("templates.zip", "rb")  # хоть что-то должно быть в try
     except FileNotFoundError as e:
         logger.error(f"Template check failed: {str(e)}")
         exit(1)
