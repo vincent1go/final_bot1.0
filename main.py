@@ -1,3 +1,5 @@
+# main.py
+
 import os
 import logging
 import asyncio
@@ -61,7 +63,7 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
         ])
     )
 
@@ -93,9 +95,9 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     template_name = context.user_data["template"]
     try:
         template_path = config.TEMPLATES[template_name]
-        pdf_path = generate_pdf(template_path, client_name)
-        filename = f"{client_name}.pdf"
-        with open(pdf_path, "rb") as f:
+        docx_path = generate_pdf(template_path, client_name)
+        filename = f"{client_name}.docx"
+        with open(docx_path, "rb") as f:
             await update.message.reply_document(document=f, filename=filename)
 
         await update.message.reply_text(
@@ -106,8 +108,8 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             ])
         )
     except Exception as e:
-        logger.error(f"Ошибка генерации PDF: {e}")
-        await update.message.reply_text("❌ Ошибка при создании PDF.")
+        logger.error(f"Ошибка генерации документа: {e}")
+        await update.message.reply_text("❌ Ошибка при создании документа.")
 
 async def handle_webhook(request):
     try:
@@ -144,10 +146,11 @@ async def main():
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))  # <-- Важно! Берём порт из переменной окружения
+    site = web.TCPSite(runner, "0.0.0.0", port=port)
     await site.start()
 
-    logger.info("Бот успешно запущен на порту 5000")
+    logger.info(f"Бот успешно запущен на порту {port}")
     while True:
         await asyncio.sleep(3600)
 
