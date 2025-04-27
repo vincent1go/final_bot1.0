@@ -1,57 +1,163 @@
-import os
-import re
-from docx import Document
-from datetime import datetime
-import pytz
-import subprocess
+import logging
+import asyncio
+import os  # <-- ВАЖНО: добавили импорт
+from aiohttp import web
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+)
+import config
+from docx_generator import generate_pdf
 
-def текущая_дата_лондон():
-    return datetime.now(pytz.timezone("Europe/London")).strftime("%d.%m.%Y")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def очистить_имя_файла(text):
-    return re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE).strip()
+SELECTING_TEMPLATE = 1
+ENTERING_TEXT = 2
 
-def generate_pdf(путь_к_шаблону: str, текст: str) -> str:
-    дата = текущая_дата_лондон()
-    имя_файла = очистить_имя_файла(текст) or "результат"
-    путь_к_временному_docx = f"{имя_файла}.docx"
-    путь_к_выходному_pdf = f"{имя_файла}.pdf"
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await update.message.reply_text(
+        "👋 *Привет! Чтобы создать документ, напиши /generate.*",
+        parse_mode="Markdown"
+    )
 
-    # Создание нового заполненного DOCX
-    doc = Document(путь_к_шаблону)
+async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = "📄 *Выберите шаблон:*"
+    keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES.keys()]
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+    await update.message.reply_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    context.user_data["state"] = SELECTING_TEMPLATE
 
-    for параграф in doc.paragraphs:
-        if "{CLIENT}" in параграф.text:
-            параграф.text = параграф.text.replace("{CLIENT}", текст)
-        if "{DATE}" in параграф.text:
-            параграф.text = параграф.text.replace("{DATE}", дата)
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    message = "🏠 *Главное меню*\n\nВыберите действие:"
+    keyboard = [
+        [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
+        [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
+    ]
+    await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    for таблица in doc.tables:
-        for строка in таблица.rows:
-            for ячейка in строка.cells:
-                if "{CLIENT}" in ячейка.text:
-                    ячейка.text = ячейка.text.replace("{CLIENT}", текст)
-                if "{DATE}" in ячейка.text:
-                    ячейка.text = ячейка.text.replace("{DATE}", дата)
+async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    message = "📄 *Выберите шаблон:*"
+    keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES.keys()]
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+    await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    context.user_data["state"] = SELECTING_TEMPLATE
 
-    doc.save(путь_к_временному_docx)
+async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    name = query.data.replace("template_", "")
+    if name not in config.TEMPLATES:
+        await query.message.edit_text("⚠️ Ошибка: Шаблон не найден.")
+        return
+    context.user_data["template"] = name
+    context.user_data["state"] = ENTERING_TEXT
+    await query.message.edit_text(
+        f"✅ Шаблон выбран: *{name}*\n\nВведите имя клиента:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")],
+        ])
+    )
 
-    # Конвертация заполненного файла
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    await query.message.edit_text(
+        "❌ Отменено. Выберите действие:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
+            [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
+        ])
+    )
+
+async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info(f"Получено сообщение: {update.message.text}")
+    if "template" not in context.user_data:
+        await update.message.reply_text(
+            "⚠️ Сначала выберите шаблон через меню.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+            ])
+        )
+        return
+
+    client_name = update.message.text.strip()
+    template_name = context.user_data["template"]
     try:
-        subprocess.run([
-            "libreoffice",
-            "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            ".",
-            путь_к_временному_docx
-        ], check=True)
-    except subprocess.CalledProcessError as e:
-        raise Exception(f"Ошибка конвертации в PDF: {e}")
+        template_path = config.TEMPLATES[template_name]
+        pdf_path = generate_pdf(template_path, client_name)
+        filename = f"{client_name}.pdf"
+        with open(pdf_path, "rb") as f:
+            await update.message.reply_document(document=f, filename=filename)
 
-    # Удаление временного .docx
-    if os.path.exists(путь_к_временному_docx):
-        os.remove(путь_к_временному_docx)
+        # Удаление временного PDF файла после отправки
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
 
-    return путь_к_выходному_pdf
+        await update.message.reply_text(
+            "✅ Документ успешно создан!\n\nМожете ввести другое имя клиента для создания нового документа.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📄 Сменить шаблон", callback_data="select_template")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+            ])
+        )
+    except Exception as e:
+        logger.error(f"Ошибка генерации PDF: {e}")
+        await update.message.reply_text("❌ Ошибка при создании документа.")
+
+async def handle_webhook(request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return web.Response(text="ok")
+    except Exception as e:
+        logger.exception("Ошибка вебхука:")
+        return web.Response(status=500, text="error")
+
+async def home(request):
+    return web.Response(text="Бот работает!")
+
+async def ping(request):
+    return web.Response(text="pong")
+
+async def main():
+    global application
+    application = Application.builder().token(config.BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("generate", generate))
+    application.add_handler(CallbackQueryHandler(select_template, pattern="select_template"))
+    application.add_handler(CallbackQueryHandler(main_menu, pattern="main_menu"))
+    application.add_handler(CallbackQueryHandler(cancel, pattern="cancel"))
+    application.add_handler(CallbackQueryHandler(template_selected, pattern="template_.*"))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text))
+
+    await application.initialize()
+    await application.bot.set_webhook(url=config.WEBHOOK_URL)
+    await application.start()
+
+    app = web.Application()
+    app.router.add_post("/webhook", handle_webhook)
+    app.router.add_get("/", home)
+    app.router.add_get("/ping", ping)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port=5000)
+    await site.start()
+
+    logger.info("Бот успешно запущен на порту 5000")
+    while True:
+        await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    asyncio.run(main())
