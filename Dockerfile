@@ -1,6 +1,6 @@
-FROM python:3.9-slim
+FROM python:3.12-slim
 
-# Устанавливаем только минимально необходимые пакеты для LibreOffice
+# Устанавливаем зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-writer \
     && apt-get clean \
@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY . .
+
 RUN pip install --no-cache-dir -r requirements.txt
 
 CMD ["python", "main.py"]
