@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# Установить LibreOffice для конвертации DOCX -> PDF
+# Установить LibreOffice для работы с документами (если понадобится в будущем)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice-writer \
     && apt-get clean \
