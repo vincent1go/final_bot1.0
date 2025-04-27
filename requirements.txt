@@ -1,5 +1,6 @@
 python-telegram-bot==20.7
-python-docx
-Flask
-pytz
+aiohttp==3.9.5
 PyMuPDF==1.23.7
+pytz==2024.2
+Flask==3.1.0
+python-docx==1.1.2
