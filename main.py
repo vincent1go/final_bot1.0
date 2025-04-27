@@ -110,54 +110,5 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             ])
         )
     except Exception as e:
-        logger.error(f"Ошибка генерации PDF: {e}")
+        logger.error(f"Ошибка при обработке сообщения: {str(e)}")
         await update.message.reply_text("❌ Ошибка при создании документа.")
-
-async def handle_webhook(request):
-    try:
-        data = await request.json()
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
-        return web.Response(text="ok")
-    except Exception as e:
-        logger.exception("Ошибка вебхука:")
-        return web.Response(status=500, text="error")
-
-async def home(request):
-    return web.Response(text="Бот работает!")
-
-async def ping(request):
-    return web.Response(text="pong")  # ответ на /ping для Render
-
-async def main():
-    global application
-    application = Application.builder().token(config.BOT_TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("generate", generate))
-    application.add_handler(CallbackQueryHandler(select_template, pattern="select_template"))
-    application.add_handler(CallbackQueryHandler(main_menu, pattern="main_menu"))
-    application.add_handler(CallbackQueryHandler(cancel, pattern="cancel"))
-    application.add_handler(CallbackQueryHandler(template_selected, pattern="template_.*"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text))
-
-    await application.initialize()
-    await application.bot.set_webhook(url=config.WEBHOOK_URL)
-    await application.start()
-
-    app = web.Application()
-    app.router.add_post("/webhook", handle_webhook)
-    app.router.add_get("/", home)
-    app.router.add_get("/ping", ping)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port=5000)
-    await site.start()
-
-    logger.info("Бот успешно запущен на порту 5000")
-    while True:
-        await asyncio.sleep(3600)
-
-if __name__ == "__main__":
-    asyncio.run(main())
