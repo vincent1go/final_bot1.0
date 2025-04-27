@@ -1,5 +1,5 @@
 import asyncio
-from flask import Flask, request, send_file
+from flask import Flask, request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -8,15 +8,18 @@ from telegram.ext import (
     ContextTypes,
 )
 from io import BytesIO
-from docx import Document
+from fpdf import FPDF
+from datetime import datetime
 
+# === ТВОИ ДАННЫЕ ===
 TOKEN = "7511704960:AAFKDWgg2-cAzRxywX1gXK47OQRWJi72qGw"
 WEBHOOK_URL = "https://final-bot1-0.onrender.com/webhook"
+PORT = 5000
 
-# Инициализация Flask
+# Flask сервер
 app = Flask(__name__)
 
-# Инициализация Telegram-приложения
+# Telegram приложение
 application = Application.builder().token(TOKEN).build()
 
 # Команда /start
@@ -28,24 +31,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "👋 Привет!\n\nЯ — твой помощник. Выбери действие ниже 👇",
+        "👋 Привет!\n\nЯ могу сгенерировать красивый PDF файл для тебя!\nВыбери действие ниже 👇",
         reply_markup=reply_markup,
     )
 
-# Генерация простого PDF (из docx → pdf)
-async def generate_pdf():
-    doc = Document()
-    doc.add_heading('Документ', level=1)
-    doc.add_paragraph('Этот документ был сгенерирован автоматически ботом!')
+# Генерация PDF
+async def generate_pdf(user_name):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=16)
 
-    # Сохраняем DOCX в память
+    date_today = datetime.now().strftime("%d.%m.%Y")
+
+    pdf.cell(0, 10, f"Документ для {user_name}", ln=True, align="C")
+    pdf.ln(10)
+    pdf.set_font("Arial", size=12)
+    pdf.cell(0, 10, f"Дата создания: {date_today}", ln=True, align="C")
+    pdf.ln(20)
+    pdf.set_font("Arial", size=10)
+    pdf.multi_cell(0, 10, "Этот документ был автоматически сгенерирован ботом. Спасибо, что пользуетесь нашим сервисом!")
+
     buffer = BytesIO()
-    doc.save(buffer)
+    pdf.output(buffer)
     buffer.seek(0)
-
     return buffer
 
-# Обработка нажатий кнопок
+# Обработка кнопок
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -60,35 +71,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     elif query.data == "about_bot":
         await query.edit_message_text(
-            "🤖 Этот бот был создан для генерации PDF документов!\n\n"
-            "⚡ Работает на Python + Flask + Telegram API.\n"
-            "Создан Тобой 🔥"
+            "🤖 Этот бот создан для генерации PDF документов на лету!\n\n"
+            "Создатель: ТЫ 🔥"
         )
     elif query.data == "generate_pdf":
-        pdf_buffer = await generate_pdf()
-        await query.message.reply_document(document=pdf_buffer, filename="document.docx")
-        await query.edit_message_text("✅ Документ отправлен!")
-
-# Webhook для Telegram
-@app.route('/webhook', methods=['POST'])
-async def telegram_webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    await application.process_update(update)
-    return "ok"
-
-# Установка webhook
-async def setup_webhook():
-    await application.bot.set_webhook(url=WEBHOOK_URL)
-
-# Главная функция
-async def main():
-    await setup_webhook()
-    app.run(host="0.0.0.0", port=5000)
-
-# Хендлеры
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(button_handler))
-
-if __name__ == '__main__':
-    asyncio.run(main())
-
+        user_name = query.from_user.full_name
+        pdf_buffer = await generate_pdf
