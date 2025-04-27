@@ -16,7 +16,7 @@ from flask import Flask, request
 # Flask-приложение для вебхуков
 app = Flask(__name__)
 
-# Токен бота и вебхук из переменных окружения
+# Токен бота и вебхук
 TOKEN = os.environ.get('BOT_TOKEN', '7511704960:AAFKDWgg2-cAzRxywX1gXK47OQRWJi72qGw')
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'https://final-bot1-0.onrender.com/webhook')
 
@@ -37,7 +37,7 @@ def check_templates():
     """Проверяет наличие всех шаблонов в папке templates/."""
     missing_templates = [path for path in TEMPLATE_FILES.values() if not os.path.exists(path)]
     if missing_templates:
-        raise FileNotFoundರ
+        raise FileNotFoundError(f"Отсутствуют шаблоны: {', '.join(missing_templates)}")
 
 def replace_text_in_paragraph(paragraph, key, value):
     """Замена текста в параграфе с сохранением форматирования."""
