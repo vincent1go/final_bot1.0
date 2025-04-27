@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 SELECTING_TEMPLATE = 1
 ENTERING_TEXT = 2
 
+# Создаем объект Application
+application = Application.builder().token(config.BOT_TOKEN).build()
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "👋 *Привет! Чтобы создать документ, напиши /generate.*",
@@ -57,7 +60,7 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data["template"] = name
     context.user_data["state"] = ENTERING_TEXT
     await query.message.edit_text(
-        f"✅ Ш уменьить шаблон: *{name}*\n\nВведите имя клиента:",
+        f"✅ Выбран шаблон: *{name}*\n\nВведите имя клиента:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
@@ -79,7 +82,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.info(f"Получено сообщение: {update.message.text}")
     if "template" not in context.user_data:
         await update.message.reply_text(
             "⚠️ Сначала выберите шаблон через меню.",
@@ -98,7 +100,6 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         with open(pdf_path, "rb") as f:
             await update.message.reply_document(document=f, filename=filename)
 
-        # Удаление временного PDF файла после отправки
         if os.path.exists(pdf_path):
             os.remove(pdf_path)
 
@@ -106,9 +107,4 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "✅ Документ успешно создан!\n\nМожете ввести другое имя клиента для создания нового документа.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📄 Сменить шаблон", callback_data="select_template")],
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
-            ])
-        )
-    except Exception as e:
-        logger.error(f"Ошибка при обработке сообщения: {str(e)}")
-        await update.message.reply_text("❌ Ошибка при создании документа.")
+                [InlineKeyboardButton("🏠 Главное меню", callback
