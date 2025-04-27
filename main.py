@@ -1,9 +1,5 @@
 import os
 import sqlite3
-import subprocess
-import tempfile
-import shutil
-from datetime import datetime
 import pytz
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
@@ -42,13 +38,50 @@ TEMPLATE_FILES = {
     'template_small_world': 'templates/template_small_world.docx',
 }
 
-# Все твои функции (замены текста, генерация документов, обработка команд /generate, /start, выбор шаблона, ввод имени и даты) остались без изменений
+# ---- ФУНКЦИИ КОТОРЫЕ НУЖНЫ ----
 
-# -- ВАЖНАЯ ВСТАВКА: обработка вебхука --
+def start(update: Update, context: CallbackContext):
+    """Обработка команды /start."""
+    update.message.reply_text('👋 Привет! Чтобы создать документ, напиши /generate.')
+
+def start_generate(update: Update, context: CallbackContext):
+    """Обработка команды /generate."""
+    keyboard = [
+        [
+            InlineKeyboardButton("Императив", callback_data='template_imperative'),
+            InlineKeyboardButton("УР", callback_data='template_ur'),
+            InlineKeyboardButton("Small World", callback_data='template_small_world'),
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    update.message.reply_text('📄 Выберите шаблон для создания документа:', reply_markup=reply_markup)
+
+def template_selected(update: Update, context: CallbackContext):
+    pass  # здесь будет твоя обработка выбора шаблона
+
+def name_input(update: Update, context: CallbackContext):
+    pass  # здесь обработка имени
+
+def date_chosen(update: Update, context: CallbackContext):
+    pass  # здесь выбор даты
+
+def input_custom_date(update: Update, context: CallbackContext):
+    pass  # здесь ввод своей даты
+
+def save_decision(update: Update, context: CallbackContext):
+    pass  # сохранить или нет
+
+def list_saved(update: Update, context: CallbackContext):
+    update.message.reply_text("📄 Список сохранённых документов (пока заглушка)")
+
+def cancel(update: Update, context: CallbackContext):
+    update.message.reply_text('❌ Операция отменена.')
+    return ConversationHandler.END
+
+# ---- ОБРАБОТЧИКИ FLASK ----
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    """Обработка входящих обновлений Telegram."""
     global dispatcher
     try:
         update_data = request.get_json(force=True)
@@ -64,17 +97,14 @@ def webhook():
         logger.error(f"Webhook error: {str(e)}")
         return 'OK', 200
 
-# -- Пинг эндпоинт для UptimeRobot --
-
 @app.route('/ping')
 def ping():
     logger.info("Received ping request")
     return 'OK'
 
-# -- Основная функция запуска --
+# ---- MAIN ----
 
 def main():
-    """Основная функция для запуска бота."""
     logger.info("Starting bot...")
 
     # Инициализация базы данных
@@ -88,18 +118,17 @@ def main():
 
     # Проверка наличия шаблонов
     try:
-        something = open("templates.zip", "rb")  # хоть что-то должно быть в try
+        open("templates.zip", "rb")
     except FileNotFoundError as e:
         logger.error(f"Template check failed: {str(e)}")
         exit(1)
 
-    # Настройка бота
     global updater, dispatcher
     updater = Updater(token=TOKEN, use_context=True)
     dispatcher = updater.dispatcher
     logger.info("Updater and dispatcher initialized")
 
-    # Регистрация всех handlers
+    # Регистрация обработчиков
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('generate', start_generate)],
         states={
@@ -118,7 +147,6 @@ def main():
     dispatcher.add_handler(CommandHandler('list_saved', list_saved))
     logger.info("Handlers registered")
 
-    # Установка вебхука
     try:
         updater.bot.set_webhook(url=WEBHOOK_URL)
         logger.info(f"Webhook set to {WEBHOOK_URL}")
@@ -126,11 +154,9 @@ def main():
         logger.error(f"Failed to set webhook: {str(e)}")
         exit(1)
 
-    # Запуск Flask
     port = int(os.environ.get('PORT', 5000))
     logger.info(f"Starting Flask on port {port}")
     app.run(host='0.0.0.0', port=port)
 
 if __name__ == '__main__':
     main()
-
