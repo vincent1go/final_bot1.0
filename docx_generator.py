@@ -7,7 +7,6 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 )
 import config
-from docx_generator import generate_pdf
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
