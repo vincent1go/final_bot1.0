@@ -1,5 +1,3 @@
-# main.py
-
 import logging
 import asyncio
 from aiohttp import web
@@ -58,7 +56,7 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     context.user_data["template"] = name
     context.user_data["state"] = ENTERING_TEXT
     await query.message.edit_text(
-        f"✅ Шаблон выбран: *{name}*\n\nВведите имя клиента:",
+        f"✅ Ш уменьить шаблон: *{name}*\n\nВведите имя клиента:",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
@@ -95,9 +93,13 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     try:
         template_path = config.TEMPLATES[template_name]
         pdf_path = generate_pdf(template_path, client_name)
-        filename = f"{client_name}.docx"
+        filename = f"{client_name}.pdf"
         with open(pdf_path, "rb") as f:
             await update.message.reply_document(document=f, filename=filename)
+
+        # Удаление временного PDF файла после отправки
+        if os.path.exists(pdf_path):
+            os.remove(pdf_path)
 
         await update.message.reply_text(
             "✅ Документ успешно создан!\n\nМожете ввести другое имя клиента для создания нового документа.",
@@ -107,7 +109,7 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             ])
         )
     except Exception as e:
-        logger.error(f"Ошибка генерации DOCX: {e}")
+        logger.error(f"Ошибка генерации PDF: {e}")
         await update.message.reply_text("❌ Ошибка при создании документа.")
 
 async def handle_webhook(request):
@@ -145,7 +147,7 @@ async def main():
     app = web.Application()
     app.router.add_post("/webhook", handle_webhook)
     app.router.add_get("/", home)
-    app.router.add_get("/ping", ping)  # <-- добавлен
+    app.router.add_get("/ping", ping)
 
     runner = web.AppRunner(app)
     await runner.setup()
