@@ -1,4 +1,3 @@
-```python
 import os
 import re
 import logging
@@ -79,4 +78,3 @@ def generate_pdf(путь_к_шаблону: str, текст: str) -> str:
         raise FileNotFoundError(f"PDF не создан: {путь_к_выходному_файлу}")
 
     return путь_к_выходному_файлу
-```
