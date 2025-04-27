@@ -6,7 +6,7 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 )
 import config
-from docx_generator import generate_pdf  # <-- ВАЖНО! Новый импорт!
+from docx_generator import generate_pdf  # Важно: правильный импорт нового генератора
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,8 +15,10 @@ SELECTING_TEMPLATE = 1
 ENTERING_TEXT = 2
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = "👋 *Привет! Чтобы создать документ, напиши /generate.*"
-    await update.message.reply_text(message, parse_mode="Markdown")
+    await update.message.reply_text(
+        "👋 *Привет! Чтобы создать документ, напиши /generate.*",
+        parse_mode="Markdown"
+    )
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = (
@@ -36,10 +38,8 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await query.answer()
     message = "🏠 *Главное меню*\n\nВыберите действие:"
     keyboard = [
-        [
-            InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template"),
-            InlineKeyboardButton("ℹ️ О боте", callback_data="about"),
-        ]
+        [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
+        [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
     ]
     await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -47,9 +47,7 @@ async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     query = update.callback_query
     await query.answer()
     message = "📄 *Выберите шаблон*:"
-    keyboard = []
-    for name in config.TEMPLATES.keys():
-        keyboard.append([InlineKeyboardButton(name, callback_data=f"template_{name}")])
+    keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES.keys()]
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
     context.user_data["state"] = SELECTING_TEMPLATE
@@ -76,18 +74,23 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
     context.user_data.clear()
-    await query.message.edit_text("❌ Отменено. Выберите действие:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
-        [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
-    ]))
+    await query.message.edit_text(
+        "❌ Отменено. Выберите действие:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
+            [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
+        ])
+    )
 
 async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"Получено сообщение: {update.message.text}")
     if "template" not in context.user_data:
-        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
         await update.message.reply_text(
             "⚠️ Сначала выберите шаблон через меню.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+            ])
         )
         return
 
@@ -100,18 +103,18 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         with open(pdf_path, "rb") as f:
             await update.message.reply_document(document=f, filename=filename)
 
-        keyboard = [
-            [InlineKeyboardButton("📄 Сменить шаблон", callback_data="select_template")],
-            [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
-        ]
         await update.message.reply_text(
-            "✅ Документ успешно создан!\n\nМожете ввести другое имя клиента, и бот снова создаст PDF.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            "✅ Документ успешно создан!\n\nМожете ввести другое имя клиента для создания нового документа.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📄 Сменить шаблон", callback_data="select_template")],
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+            ])
         )
     except Exception as e:
         logger.error(f"Ошибка генерации PDF: {e}")
         await update.message.reply_text("❌ Ошибка при создании PDF.")
 
+# Обработчик webhook
 async def handle_webhook(request):
     try:
         data = await request.json()
@@ -122,6 +125,7 @@ async def handle_webhook(request):
         logger.exception("Ошибка вебхука:")
         return web.Response(status=500, text="error")
 
+# Домашняя страница
 async def home(request):
     return web.Response(text="Бот работает!")
 
@@ -142,7 +146,7 @@ async def main():
     await application.start()
 
     app = web.Application()
-    app.router.add_post("/telegram", handle_webhook)
+    app.router.add_post("/webhook", handle_webhook)  # <-- Здесь исправлено!
     app.router.add_get("/", home)
 
     runner = web.AppRunner(app)
@@ -156,3 +160,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
