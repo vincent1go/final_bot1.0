@@ -12,6 +12,11 @@ from telegram.ext import (
 )
 from docx import Document
 from flask import Flask, request
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # Flask-приложение для вебхуков
 app = Flask(__name__)
@@ -35,9 +40,12 @@ TEMPLATE_FILES = {
 
 def check_templates():
     """Проверяет наличие всех шаблонов в папке templates/."""
+    logger.info("Checking templates...")
     missing_templates = [path for path in TEMPLATE_FILES.values() if not os.path.exists(path)]
     if missing_templates:
+        logger.error(f"Missing templates: {', '.join(missing_templates)}")
         raise FileNotFoundError(f"Отсутствуют шаблоны: {', '.join(missing_templates)}")
+    logger.info("All templates found")
 
 def replace_text_in_paragraph(paragraph, key, value):
     """Замена текста в параграфе с сохранением форматирования."""
@@ -64,6 +72,7 @@ def generate_and_send_document(update: Update, context: CallbackContext):
     date_time = context.user_data['date_time']
     chat_id = update.effective_chat.id
 
+    logger.info(f"Generating document for template: {template}, client: {client_name}, date: {date_time}")
     context.bot.send_message(chat_id=chat_id, text="📄 Генерирую документ, подождите... ⏳")
     template_path = TEMPLATE_FILES[template]
 
@@ -71,6 +80,7 @@ def generate_and_send_document(update: Update, context: CallbackContext):
         with tempfile.TemporaryDirectory() as tmpdirname:
             docx_path = os.path.join(tmpdirname, 'document.docx')
             pdf_path = os.path.join(tmpdirname, 'document.pdf')
+            logger.info(f"Copying template {template_path} to {docx_path}")
             shutil.copy(template_path, docx_path)
 
             # Редактирование документа
@@ -79,18 +89,28 @@ def generate_and_send_document(update: Update, context: CallbackContext):
             replace_text(doc, "Date:", f"Date: {date_time}")
             replace_text(doc, "DATE:", f"DATE: {date_time}")
             doc.save(docx_path)
+            logger.info("Document edited")
 
             # Конвертация в PDF
-            subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf', docx_path, '--outdir', tmpdirname], check=True)
+            logger.info(f"Converting {docx_path} to PDF at {pdf_path}")
+            result = subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf', docx_path, '--outdir', tmpdirname], 
+                                  capture_output=True, text=True, check=True)
+            logger.info(f"LibreOffice output: {result.stdout}")
 
             # Отправка PDF
             with open(pdf_path, 'rb') as f:
                 context.bot.send_document(chat_id=chat_id, document=f, caption="✅ Документ готов!")
+            logger.info("Document sent successfully")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"LibreOffice error: {e.stderr}")
+        context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка конвертации документа: {str(e)}")
     except Exception as e:
+        logger.error(f"Document generation error: {str(e)}")
         context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка при создании документа: {str(e)}")
 
 def start(update: Update, context: CallbackContext) -> None:
     """Приветственное сообщение."""
+    logger.info(f"Received /start command from user {update.effective_user.id}")
     update.message.reply_text(
         "👋 Привет, бро! Я бот для создания документов. 🚀\n"
         "Команды:\n"
@@ -102,9 +122,11 @@ def start(update: Update, context: CallbackContext) -> None:
 
 def start_generate(update: Update, context: CallbackContext) -> int:
     """Начало процесса генерации документа."""
+    logger.info(f"Received /generate command from user {update.effective_user.id}")
     try:
         check_templates()
     except FileNotFoundError as e:
+        logger.error(f"Template check failed: {str(e)}")
         update.message.reply_text(f"❌ Ошибка: {str(e)}")
         return ConversationHandler.END
 
@@ -123,6 +145,7 @@ def template_selected(update: Update, context: CallbackContext) -> int:
     query.answer()
     template = query.data
     context.user_data['template'] = template
+    logger.info(f"User {query.from_user.id} selected template: {template}")
     query.edit_message_text(text=f"✅ Выбран шаблон: {template.replace('template_', '').title()}")
     query.message.reply_text("✍️ Введи имя клиента:")
     return INPUT_NAME
@@ -130,6 +153,7 @@ def template_selected(update: Update, context: CallbackContext) -> int:
 def name_input(update: Update, context: CallbackContext) -> int:
     """Обработка ввода имени клиента."""
     context.user_data['client_name'] = update.message.text.strip()
+    logger.info(f"User {update.effective_user.id} entered client name: {context.user_data['client_name']}")
     keyboard = [
         [InlineKeyboardButton("Текущая дата и время", callback_data='current_date')],
         [InlineKeyboardButton("Ввести свою дату", callback_data='custom_date')],
@@ -142,6 +166,7 @@ def date_chosen(update: Update, context: CallbackContext) -> int:
     """Обработка выбора даты."""
     query = update.callback_query
     query.answer()
+    logger.info(f"User {query.from_user.id} chose date option: {query.data}")
     if query.data == 'current_date':
         now = datetime.now(pytz.utc).astimezone(kiev_tz)
         date_time = now.strftime("%d.%m.%Y %H:%M")
@@ -158,10 +183,12 @@ def input_custom_date(update: Update, context: CallbackContext) -> int:
     try:
         date_time = datetime.strptime(update.message.text.strip(), "%d.%m.%Y %H:%M")
         context.user_data['date_time'] = update.message.text.strip()
+        logger.info(f"User {update.effective_user.id} entered custom date: {context.user_data['date_time']}")
         generate_and_send_document(update, context)
         ask_to_save(update, context)
         return ASK_SAVE
     except ValueError:
+        logger.error(f"Invalid date format from user {update.effective_user.id}: {update.message.text}")
         update.message.reply_text("❌ Неверный формат. Введи дату в формате ДД.ММ.ГГГГ ЧЧ:ММ:")
         return INPUT_CUSTOM_DATE
 
@@ -178,6 +205,7 @@ def save_decision(update: Update, context: CallbackContext) -> int:
     """Обработка решения о сохранении."""
     query = update.callback_query
     query.answer()
+    logger.info(f"User {query.from_user.id} chose save option: {query.data}")
     if query.data == 'save':
         user_id = query.from_user.id
         template = context.user_data['template']
@@ -197,12 +225,14 @@ def save_decision(update: Update, context: CallbackContext) -> int:
 
 def cancel(update: Update, context: CallbackContext) -> int:
     """Отмена диалога."""
+    logger.info(f"User {update.effective_user.id} cancelled operation")
     update.message.reply_text('❌ Операция отменена. Хочешь начать заново? Жми /generate 😎')
     return ConversationHandler.END
 
 def list_saved(update: Update, context: CallbackContext):
     """Список сохранённых конфигураций."""
     user_id = update.effective_user.id
+    logger.info(f"User {user_id} requested saved documents")
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
     c.execute("SELECT id, template, client_name, date FROM saved_documents WHERE user_id=?", (user_id,))
@@ -220,19 +250,27 @@ def list_saved(update: Update, context: CallbackContext):
 def webhook():
     """Обработка входящих обновлений Telegram."""
     try:
-        update = Update.de_json(request.get_json(force=True), updater.bot)
-        dispatcher.process_update(update)
+        update_data = request.get_json(force=True)
+        logger.info(f"Received update: {update_data}")
+        update = Update.de_json(update_data, updater.bot)
+        if update:
+            dispatcher.process_update(update)
+        else:
+            logger.error("Failed to parse update")
+        return 'OK'
     except Exception as e:
-        print(f"Webhook error: {e}")
-    return 'OK'
+        logger.error(f"Webhook error: {str(e)}")
+        return 'OK', 200
 
 @app.route('/ping')
 def ping():
     """Эндпоинт для Uptime Robot."""
+    logger.info("Received ping request")
     return 'OK'
 
 def main():
     """Основная функция для запуска бота."""
+    logger.info("Starting bot...")
     # Инициализация базы данных
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
@@ -240,18 +278,20 @@ def main():
                  (id INTEGER PRIMARY KEY, user_id INTEGER, template TEXT, client_name TEXT, date TEXT)''')
     conn.commit()
     conn.close()
+    logger.info("Database initialized")
 
     # Проверка наличия шаблонов
     try:
         check_templates()
     except FileNotFoundError as e:
-        print(f"Ошибка: {e}")
+        logger.error(f"Template check failed: {str(e)}")
         exit(1)
 
     # Настройка бота
     global updater
     updater = Updater(token=TOKEN, use_context=True)
     dispatcher = updater.dispatcher
+    logger.info("Updater initialized")
 
     # Обработчик диалога
     conv_handler = ConversationHandler(
@@ -264,23 +304,29 @@ def main():
             ASK_SAVE: [CallbackQueryHandler(save_decision)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
+        per_message=True  # Устраняет предупреждение
     )
 
     # Добавление обработчиков
     dispatcher.add_handler(CommandHandler('start', start))
     dispatcher.add_handler(conv_handler)
     dispatcher.add_handler(CommandHandler('list_saved', list_saved))
+    logger.info("Handlers registered")
 
     # Установка вебхука
     try:
         updater.bot.set_webhook(url=WEBHOOK_URL)
-        print(f"Webhook установлен: {WEBHOOK_URL}")
+        logger.info(f"Webhook set to {WEBHOOK_URL}")
     except Exception as e:
-        print(f"Ошибка установки вебхука: {e}")
+        logger.error(f"Failed to set webhook: {str(e)}")
+        exit(1)
 
     # Запуск Flask
     port = int(os.environ.get('PORT', 5000))
+    logger.info(f"Starting Flask on port {port}")
     app.run(host='0.0.0.0', port=port)
 
+if __name__ == '__main__':
+    main()
 if __name__ == '__main__':
     main()
