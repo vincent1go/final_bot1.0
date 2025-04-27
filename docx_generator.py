@@ -1,80 +1,65 @@
 import os
-import re
-import logging
-from docx import Document
-from datetime import datetime
-import pytz
+import tempfile
 import subprocess
+from docx import Document
+import asyncio
 
-logger = logging.getLogger(__name__)
-
-def текущая_дата_лондон():
-    return datetime.now(pytz.timezone("Europe/London")).strftime("%d.%m.%Y")
-
-def очистить_имя_файла(text):
-    return re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE).strip()
-
-def generate_pdf(путь_к_шаблону: str, текст: str) -> str:
+async def generate_pdf(client_name: str, date_str: str) -> bytes:
     """
-    Заполняет DOCX шаблон пользовательским текстом, конвертирует в PDF и возвращает путь к PDF.
-    :param путь_к_шаблону: Путь к DOCX шаблону
-    :param текст: Имя клиента
-    :return: Путь к сгенерированному PDF
+    Создаёт .docx по шаблону, подставляет переменные и конвертирует в PDF.
+    Возвращает PDF в виде байтового потока.
     """
-    if not os.path.exists(путь_к_шаблону):
-        logger.error(f"Шаблон не найден: {путь_к_шаблону}")
-        raise FileNotFoundError(f"Шаблон не найден: {путь_к_шаблону}")
 
-    logger.info(f"Генерация PDF с шаблоном: {путь_к_шаблону}, клиент: {текст}")
-    дата = текущая_дата_лондон()
-    имя_файла = очистить_имя_файла(текст) or "результат"
-    путь_к_временному_файлу = f"{имя_файла}.docx"
-    путь_к_выходному_файлу = f"{имя_файла}.pdf"
+    # Путь до шаблона .docx (он должен лежать рядом с этим скриптом)
+    template_path = os.path.join(os.path.dirname(__file__), "template.docx")
 
-    # Заполнение DOCX шаблона
-    doc = Document(путь_к_шаблону)
+    # Загружаем шаблон
+    doc = Document(template_path)
 
-    for параграф in doc.paragraphs:
-        if "{CLIENT}" in параграф.text:
-            параграф.text = параграф.text.replace("{CLIENT}", текст)
-        if "{DATE}" in параграф.text:
-            параграф.text = параграф.text.replace("{DATE}", дата)
+    # Заменяем плейсхолдеры {CLIENT} и {DATE} во всех абзацах
+    for paragraph in doc.paragraphs:
+        if "{CLIENT}" in paragraph.text or "{DATE}" in paragraph.text:
+            for run in paragraph.runs:
+                run.text = run.text.replace("{CLIENT}", client_name).replace("{DATE}", date_str)
 
-    # Замена в таблицах
-    for таблица in doc.tables:
-        for строка in таблица.rows:
-            for ячейка in строка.cells:
-                if "{CLIENT}" in ячейка.text:
-                    ячейка.text = ячейка.text.replace("{CLIENT}", текст)
-                if "{DATE}" in ячейка.text:
-                    ячейка.text = ячейка.text.replace("{DATE}", дата)
+    # При необходимости заменить и в таблицах
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    if "{CLIENT}" in paragraph.text or "{DATE}" in paragraph.text:
+                        for run in paragraph.runs:
+                            run.text = run.text.replace("{CLIENT}", client_name).replace("{DATE}", date_str)
 
-    doc.save(путь_к_временному_файлу)
-    logger.info(f"Сохранен временный DOCX: {путь_к_временному_файлу}")
+    # Сохраняем результат во временный .docx-файл
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp_docx:
+        doc.save(tmp_docx.name)
+        temp_docx_path = tmp_docx.name
 
-    # Конвертация DOCX в PDF с использованием LibreOffice
+    # Создаём временную директорию для конвертации
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # Запускаем конвертацию LibreOffice (headless) в фоновом потоке
+        loop = asyncio.get_running_loop()
+        cmd = [
+            "soffice", "--headless", "--convert-to", "pdf", 
+            "--outdir", tmp_dir, temp_docx_path
+        ]
+        # Выполняем синхронный вызов в отдельном потоке, чтобы не блокировать asyncio
+        await loop.run_in_executor(None, subprocess.run, cmd, {"check": True})
+
+        # Ищем сгенерированный PDF (имя совпадает с .docx, но .pdf)
+        base = os.path.splitext(os.path.basename(temp_docx_path))[0]
+        pdf_path = os.path.join(tmp_dir, base + ".pdf")
+
+        # Читаем PDF как байты
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+
+    # Удаляем временный .docx-файл
     try:
-        subprocess.run([
-            "libreoffice",
-            "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            ".",
-            путь_к_временному_файлу
-        ], check=True, capture_output=True, text=True)
-        logger.info(f"Успешно создан PDF: {путь_к_выходному_файлу}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка конвертации в PDF: {e.stderr}")
-        raise Exception(f"Ошибка конвертации в PDF: {e.stderr}")
+        os.remove(temp_docx_path)
+    except OSError:
+        pass
 
-    # Удаление временного DOCX файла
-    if os.path.exists(путь_к_временному_файлу):
-        os.remove(путь_к_временному_файлу)
-        logger.info(f"Удален временный DOCX: {путь_к_временному_файлу}")
+    return pdf_bytes
 
-    if not os.path.exists(путь_к_выходному_файлу):
-        logger.error(f"PDF не создан: {путь_к_выходному_файлу}")
-        raise FileNotFoundError(f"PDF не создан: {путь_к_выходному_файлу}")
-
-    return путь_к_выходному_файлу
