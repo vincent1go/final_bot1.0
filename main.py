@@ -15,96 +15,37 @@ logger = logging.getLogger(__name__)
 SELECTING_TEMPLATE = 1
 ENTERING_TEXT = 2
 
-# Создаем объект Application
-application = Application.builder().token(config.BOT_TOKEN).build()
+app = Application.builder().token(config.BOT_TOKEN).build()
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "👋 *Привет! Чтобы создать документ, напиши /generate.*",
-        parse_mode="Markdown"
-    )
+# Все handlers сюда
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler("generate", generate))
+app.add_handler(CallbackQueryHandler(main_menu, pattern="^main_menu$"))
+app.add_handler(CallbackQueryHandler(select_template, pattern="^select_template$"))
+app.add_handler(CallbackQueryHandler(template_selected, pattern="^template_"))
+app.add_handler(CallbackQueryHandler(cancel, pattern="^cancel$"))
+app.add_handler(CallbackQueryHandler(cancel, pattern="^about$"))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text))
 
-async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = "📄 *Выберите шаблон:*"
-    keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES.keys()]
-    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-    await update.message.reply_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-    context.user_data["state"] = SELECTING_TEMPLATE
+# Все async-функции (start, generate, и т.д.) остаются те же!
 
-async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    message = "🏠 *Главное меню*\n\nВыберите действие:"
-    keyboard = [
-        [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
-        [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
-    ]
-    await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+async def start_server():
+    # Установка webhook
+    await app.bot.set_webhook(url=config.WEBHOOK_URL)
 
-async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    message = "📄 *Выберите шаблон:*"
-    keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES.keys()]
-    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-    await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
-    context.user_data["state"] = SELECTING_TEMPLATE
+    # aiohttp приложение для Render
+    aio_app = web.Application()
+    aio_app.router.add_post("/webhook", app.webhook_handler())
 
-async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    name = query.data.replace("template_", "")
-    if name not in config.TEMPLATES:
-        await query.message.edit_text("⚠️ Ошибка: Шаблон не найден.")
-        return
-    context.user_data["template"] = name
-    context.user_data["state"] = ENTERING_TEXT
-    await query.message.edit_text(
-        f"✅ Выбран шаблон: *{name}*\n\nВведите имя клиента:",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")],
-        ])
-    )
+    port = int(os.environ.get("PORT", 5000))
+    runner = web.AppRunner(aio_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    await query.message.edit_text(
-        "❌ Отменено. Выберите действие:",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
-            [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
-        ])
-    )
+    logging.info(f"✅ Сервер запущен на порту {port}")
+    while True:
+        await asyncio.sleep(3600)
 
-async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if "template" not in context.user_data:
-        await update.message.reply_text(
-            "⚠️ Сначала выберите шаблон через меню.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
-            ])
-        )
-        return
-
-    client_name = update.message.text.strip()
-    template_name = context.user_data["template"]
-    try:
-        template_path = config.TEMPLATES[template_name]
-        pdf_path = generate_pdf(template_path, client_name)
-        filename = f"{client_name}.pdf"
-        with open(pdf_path, "rb") as f:
-            await update.message.reply_document(document=f, filename=filename)
-
-        if os.path.exists(pdf_path):
-            os.remove(pdf_path)
-
-        await update.message.reply_text(
-            "✅ Документ успешно создан!\n\nМожете ввести другое имя клиента для создания нового документа.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📄 Сменить шаблон", callback_data="select_template")],
-                [InlineKeyboardButton("🏠 Главное меню", callback
+if __name__ == "__main__":
+    asyncio.run(start_server())
