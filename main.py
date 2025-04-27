@@ -1,99 +1,23 @@
-import os
-import re
-import fitz  # PyMuPDF
-import pytz
-from datetime import datetime
 import logging
+import asyncio
+from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import (Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters)
+import config
+from pdf_generator import generate_pdf
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Цвет текста (тёмно-серый)
-COLOR = (69 / 255, 69 / 255, 69 / 255)
+SELECTING_TEMPLATE = 1
+ENTERING_TEXT = 2
 
-def текущая_дата_лондон():
-    return datetime.now(pytz.timezone("Europe/London")).strftime("%d.%m.%Y")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = (
+        "👋 *Привет! Чтобы создать документ, напиши /generate.*"
+    )
+    await update.message.reply_text(message, parse_mode="Markdown")
 
-def очистить_имя_файла(text):
-    return re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE).strip()
-
-def заменить_текст_на_странице(page, старый_текст, новый_текст, is_date=False, только_первые_n=0):
-    области = page.search_for(старый_текст)
-    if not области:
-        logger.warning(f"Текст '{старый_текст}' не найден на странице {page.number + 1}")
-        return False
-
-    if только_первые_n > 0:
-        области = области[:только_первые_n]
-
-    for область in области:
-        расширенная_область = fitz.Rect(
-            область.x0 - 5, область.y0 - 5,
-            область.x1 + 50, область.y1 + 5
-        )
-        page.add_redact_annot(расширенная_область, fill=(1, 1, 1))
-    page.apply_redactions()
-
-    for i, область in enumerate(области):
-        смещение_y = 15 if is_date else 0
-        if i == 1 and len(области) > 1:
-            предыдущая_область = области[i - 1]
-            if abs(область.y0 - предыдущая_область.y0) < 10:
-                смещение_y += 15
-        page.insert_text(
-            (область.x0, область.y0 + смещение_y),
-            новый_текст,
-            fontname="helv",
-            fontsize=11,
-            color=COLOR
-        )
-    return True
-
-def generate_pdf(путь_к_шаблону: str, текст: str) -> str:
-    logger.info(f"Генерация PDF с шаблоном '{путь_к_шаблону}' и текстом '{текст}'")
-    дата = текущая_дата_лондон()
-    имя_файла = очистить_имя_файла(текст) or "результат"
-    путь_к_выходному_файлу = f"{имя_файла}.pdf"
-
-    try:
-        doc = fitz.open(путь_к_шаблону)
-    except Exception as e:
-        logger.error(f"Ошибка открытия файла '{путь_к_шаблону}': {str(e)}")
-        raise
-
-    for page in doc:
-        logger.info(f"Обработка страницы {page.number + 1}")
-        if "contract_template3.pdf" in путь_к_шаблону:
-            if page.number == 0:
-                заменить_текст_на_странице(page, "Client: ", f"Client: {текст}")
-            if page.number == 12:
-                заменить_текст_на_странице(page, "DATE: ", f"DATE: {дата}", is_date=True)
-        elif "template_small_world.pdf" in путь_к_шаблону:
-            if page.number == 0:
-                заменить_текст_на_странице(page, "Client: ", f"Client: {текст}")
-            if page.number == 4:
-                заменить_текст_на_странице(page, "Date: ", f"Date: {дата}", is_date=True, только_первые_n=2)
-        else:
-            if page.number == 0:
-                заменить_текст_на_странице(page, "Client: ", f"Client: {текст}")
-            if page.number == 4:
-                заменить_текст_на_странице(page, "Date: ", f"Date: {дата}", is_date=True)
-
-    try:
-        doc.save(путь_к_выходному_файлу, garbage=4, deflate=True, clean=True)
-        logger.info(f"PDF сохранен как '{путь_к_выходному_файлу}'")
-    except Exception as e:
-        logger.error(f"Ошибка сохранения PDF: {str(e)}")
-        raise
-    finally:
-        doc.close()
-
-    return путь_к_выходному_файлу
-
-# Новый обработчик для /generate
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = (
         "📄 Чтобы создать документ:\n"
@@ -106,3 +30,129 @@ async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
     ]
     await update.message.reply_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    message = "🏠 *Главное меню*\n\nВыберите действие:"
+    keyboard = [
+        [
+            InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template"),
+            InlineKeyboardButton("ℹ️ О боте", callback_data="about"),
+        ]
+    ]
+    await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    message = "📄 *Выберите шаблон*:"
+    keyboard = []
+    for name in config.TEMPLATES.keys():
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"template_{name}")])
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
+    await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    context.user_data["state"] = SELECTING_TEMPLATE
+
+async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    name = query.data.replace("template_", "")
+    if name not in config.TEMPLATES:
+        await query.message.edit_text("⚠️ Ошибка: Шаблон не найден.")
+        return
+    context.user_data["template"] = name
+    context.user_data["state"] = ENTERING_TEXT
+    await query.message.edit_text(
+        f"✅ Шаблон выбран: *{name}*\n\nВведите имя клиента:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")],
+        ])
+    )
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    context.user_data.clear()
+    await query.message.edit_text("❌ Отменено. Выберите действие:", parse_mode="Markdown", reply_markup=InlineKeyboardMarkup([
+        [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
+        [InlineKeyboardButton("ℹ️ О боте", callback_data="about")]
+    ]))
+
+async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info(f"Получено сообщение: {update.message.text}")
+    if "template" not in context.user_data:
+        keyboard = [[InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]]
+        await update.message.reply_text(
+            "⚠️ Сначала выберите шаблон через меню.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return
+
+    client_name = update.message.text.strip()
+    template_name = context.user_data["template"]
+    try:
+        template_path = config.TEMPLATES[template_name]
+        pdf_path = generate_pdf(template_path, client_name)
+        filename = f"{client_name}.pdf"
+        with open(pdf_path, "rb") as f:
+            await update.message.reply_document(document=f, filename=filename)
+
+        keyboard = [
+            [InlineKeyboardButton("📄 Сменить шаблон", callback_data="select_template")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+        ]
+        await update.message.reply_text(
+            "✅ Документ успешно создан!\n\nМожете ввести другое имя клиента, и бот снова создаст PDF.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    except Exception as e:
+        logger.error(f"Ошибка генерации PDF: {e}")
+        await update.message.reply_text("❌ Ошибка при создании PDF.")
+
+async def handle_webhook(request):
+    try:
+        data = await request.json()
+        update = Update.de_json(data, application.bot)
+        await application.process_update(update)
+        return web.Response(text="ok")
+    except Exception as e:
+        logger.exception("Ошибка вебхука:")
+        return web.Response(status=500, text="error")
+
+async def home(request):
+    return web.Response(text="Бот работает!")
+
+async def main():
+    global application
+    application = Application.builder().token(config.BOT_TOKEN).build()
+
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("generate", generate))
+    application.add_handler(CallbackQueryHandler(select_template, pattern="select_template"))
+    application.add_handler(CallbackQueryHandler(main_menu, pattern="main_menu"))
+    application.add_handler(CallbackQueryHandler(cancel, pattern="cancel"))
+    application.add_handler(CallbackQueryHandler(template_selected, pattern="template_.*"))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text))
+
+    await application.initialize()
+    await application.bot.set_webhook(url=config.WEBHOOK_URL)
+    await application.start()
+
+    app = web.Application()
+    app.router.add_post("/telegram", handle_webhook)
+    app.router.add_get("/", home)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port=8080)
+    await site.start()
+
+    logger.info("Бот успешно запущен на порту 8080")
+    while True:
+        await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    asyncio.run(main())
