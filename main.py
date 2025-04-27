@@ -1,12 +1,13 @@
 import logging
 import asyncio
+import os
 from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 )
 import config
-from docx_generator import generate_pdf  # Важно: правильный импорт нового генератора
+from docx_generator import generate_pdf
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    message = "📄 *Выберите шаблон*:"
+    message = "📄 *Выберите шаблон*"
     keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES.keys()]
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -66,7 +67,7 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
         ])
     )
 
@@ -84,7 +85,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    logger.info(f"Получено сообщение: {update.message.text}")
     if "template" not in context.user_data:
         await update.message.reply_text(
             "⚠️ Сначала выберите шаблон через меню.",
@@ -104,7 +104,7 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_document(document=f, filename=filename)
 
         await update.message.reply_text(
-            "✅ Документ успешно создан!\n\nМожете ввести другое имя клиента для создания нового документа.",
+            "✅ Документ успешно создан!",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📄 Сменить шаблон", callback_data="select_template")],
                 [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
@@ -114,7 +114,6 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         logger.error(f"Ошибка генерации PDF: {e}")
         await update.message.reply_text("❌ Ошибка при создании PDF.")
 
-# Обработчик webhook
 async def handle_webhook(request):
     try:
         data = await request.json()
@@ -122,10 +121,9 @@ async def handle_webhook(request):
         await application.process_update(update)
         return web.Response(text="ok")
     except Exception as e:
-        logger.exception("Ошибка вебхука:")
+        logger.exception("Ошибка в webhook:")
         return web.Response(status=500, text="error")
 
-# Домашняя страница
 async def home(request):
     return web.Response(text="Бот работает!")
 
@@ -146,18 +144,18 @@ async def main():
     await application.start()
 
     app = web.Application()
-    app.router.add_post("/webhook", handle_webhook)  # <-- Здесь исправлено!
+    app.router.add_post("/webhook", handle_webhook)
     app.router.add_get("/", home)
 
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", port=8080)
+    port = int(os.environ.get("PORT", 5000))
+    site = web.TCPSite(runner, "0.0.0.0", port=port)
     await site.start()
 
-    logger.info("Бот успешно запущен на порту 8080")
+    logger.info(f"Бот успешно запущен на порту {port}")
     while True:
         await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     asyncio.run(main())
-
