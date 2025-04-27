@@ -4,6 +4,8 @@ import fitz  # PyMuPDF
 import pytz
 from datetime import datetime
 import logging
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ContextTypes
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
