@@ -2,9 +2,11 @@ import logging
 import asyncio
 from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters)
+from telegram.ext import (
+    Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
+)
 import config
-from pdf_generator import generate_pdf
+from docx_generator import generate_pdf  # <-- ВАЖНО! Новый импорт!
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -13,9 +15,7 @@ SELECTING_TEMPLATE = 1
 ENTERING_TEXT = 2
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = (
-        "👋 *Привет! Чтобы создать документ, напиши /generate.*"
-    )
+    message = "👋 *Привет! Чтобы создать документ, напиши /generate.*"
     await update.message.reply_text(message, parse_mode="Markdown")
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
