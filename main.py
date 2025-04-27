@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 # Flask-приложение для вебхуков
 app = Flask(__name__)
 
+# Глобальные переменные
+updater = None
+dispatcher = None
+
 # Токен бота и вебхук
 TOKEN = os.environ.get('BOT_TOKEN', '7511704960:AAFKDWgg2-cAzRxywX1gXK47OQRWJi72qGw')
 WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'https://final-bot1-0.onrender.com/webhook')
@@ -249,14 +253,16 @@ def list_saved(update: Update, context: CallbackContext):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     """Обработка входящих обновлений Telegram."""
+    global dispatcher
     try:
         update_data = request.get_json(force=True)
         logger.info(f"Received update: {update_data}")
         update = Update.de_json(update_data, updater.bot)
-        if update:
+        if update and dispatcher:
             dispatcher.process_update(update)
+            logger.info("Update processed successfully")
         else:
-            logger.error("Failed to parse update")
+            logger.error("Failed to parse update or dispatcher not initialized")
         return 'OK'
     except Exception as e:
         logger.error(f"Webhook error: {str(e)}")
@@ -288,10 +294,10 @@ def main():
         exit(1)
 
     # Настройка бота
-    global updater
+    global updater, dispatcher
     updater = Updater(token=TOKEN, use_context=True)
     dispatcher = updater.dispatcher
-    logger.info("Updater initialized")
+    logger.info("Updater and dispatcher initialized")
 
     # Обработчик диалога
     conv_handler = ConversationHandler(
@@ -304,7 +310,7 @@ def main():
             ASK_SAVE: [CallbackQueryHandler(save_decision)],
         },
         fallbacks=[CommandHandler('cancel', cancel)],
-        per_message=True  # Устраняет предупреждение
+        per_message=True
     )
 
     # Добавление обработчиков
@@ -326,7 +332,5 @@ def main():
     logger.info(f"Starting Flask on port {port}")
     app.run(host='0.0.0.0', port=port)
 
-if __name__ == '__main__':
-    main()
 if __name__ == '__main__':
     main()
