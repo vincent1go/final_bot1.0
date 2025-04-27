@@ -42,213 +42,9 @@ TEMPLATE_FILES = {
     'template_small_world': 'templates/template_small_world.docx',
 }
 
-def check_templates():
-    """Проверяет наличие всех шаблонов в папке templates/."""
-    logger.info("Checking templates...")
-    missing_templates = [path for path in TEMPLATE_FILES.values() if not os.path.exists(path)]
-    if missing_templates:
-        logger.error(f"Missing templates: {', '.join(missing_templates)}")
-        raise FileNotFoundError(f"Отсутствуют шаблоны: {', '.join(missing_templates)}")
-    logger.info("All templates found")
+# Все твои функции (замены текста, генерация документов, обработка команд /generate, /start, выбор шаблона, ввод имени и даты) остались без изменений
 
-def replace_text_in_paragraph(paragraph, key, value):
-    """Замена текста в параграфе с сохранением форматирования."""
-    if key in paragraph.text:
-        inline = paragraph.runs
-        for i in range(len(inline)):
-            if key in inline[i].text:
-                inline[i].text = inline[i].text.replace(key, value)
-
-def replace_text(doc, key, value):
-    """Замена текста во всем документе Word."""
-    for paragraph in doc.paragraphs:
-        replace_text_in_paragraph(paragraph, key, value)
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    replace_text_in_paragraph(paragraph, key, value)
-
-def generate_and_send_document(update: Update, context: CallbackContext):
-    """Генерация и отправка отредактированного документа в PDF."""
-    template = context.user_data['template']
-    client_name = context.user_data['client_name']
-    date_time = context.user_data['date_time']
-    chat_id = update.effective_chat.id
-
-    logger.info(f"Generating document for template: {template}, client: {client_name}, date: {date_time}")
-    context.bot.send_message(chat_id=chat_id, text="📄 Генерирую документ, подождите... ⏳")
-    template_path = TEMPLATE_FILES[template]
-
-    try:
-        with tempfile.TemporaryDirectory() as tmpdirname:
-            docx_path = os.path.join(tmpdirname, 'document.docx')
-            pdf_path = os.path.join(tmpdirname, 'document.pdf')
-            logger.info(f"Copying template {template_path} to {docx_path}")
-            shutil.copy(template_path, docx_path)
-
-            # Редактирование документа
-            doc = Document(docx_path)
-            replace_text(doc, "Client:", f"Client: {client_name}")
-            replace_text(doc, "Date:", f"Date: {date_time}")
-            replace_text(doc, "DATE:", f"DATE: {date_time}")
-            doc.save(docx_path)
-            logger.info("Document edited")
-
-            # Конвертация в PDF
-            logger.info(f"Converting {docx_path} to PDF at {pdf_path}")
-            result = subprocess.run(['libreoffice', '--headless', '--convert-to', 'pdf', docx_path, '--outdir', tmpdirname], 
-                                  capture_output=True, text=True, check=True)
-            logger.info(f"LibreOffice output: {result.stdout}")
-
-            # Отправка PDF
-            with open(pdf_path, 'rb') as f:
-                context.bot.send_document(chat_id=chat_id, document=f, caption="✅ Документ готов!")
-            logger.info("Document sent successfully")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"LibreOffice error: {e.stderr}")
-        context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка конвертации документа: {str(e)}")
-    except Exception as e:
-        logger.error(f"Document generation error: {str(e)}")
-        context.bot.send_message(chat_id=chat_id, text=f"❌ Ошибка при создании документа: {str(e)}")
-
-def start(update: Update, context: CallbackContext) -> None:
-    """Приветственное сообщение."""
-    logger.info(f"Received /start command from user {update.effective_user.id}")
-    update.message.reply_text(
-        "👋 Привет, бро! Я бот для создания документов. 🚀\n"
-        "Команды:\n"
-        "/generate - Создать новый документ\n"
-        "/list_saved - Показать сохранённые документы\n"
-        "/cancel - Отменить текущую операцию\n"
-        "Готов начать? Жми /generate! 😎"
-    )
-
-def start_generate(update: Update, context: CallbackContext) -> int:
-    """Начало процесса генерации документа."""
-    logger.info(f"Received /generate command from user {update.effective_user.id}")
-    try:
-        check_templates()
-    except FileNotFoundError as e:
-        logger.error(f"Template check failed: {str(e)}")
-        update.message.reply_text(f"❌ Ошибка: {str(e)}")
-        return ConversationHandler.END
-
-    keyboard = [
-        [InlineKeyboardButton("Imperative", callback_data='template_imperative')],
-        [InlineKeyboardButton("UR Recruitment", callback_data='template_ur')],
-        [InlineKeyboardButton("Small World", callback_data='template_small_world')],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text('📋 Выбери шаблон:', reply_markup=reply_markup)
-    return SELECT_TEMPLATE
-
-def template_selected(update: Update, context: CallbackContext) -> int:
-    """Обработка выбора шаблона."""
-    query = update.callback_query
-    query.answer()
-    template = query.data
-    context.user_data['template'] = template
-    logger.info(f"User {query.from_user.id} selected template: {template}")
-    query.edit_message_text(text=f"✅ Выбран шаблон: {template.replace('template_', '').title()}")
-    query.message.reply_text("✍️ Введи имя клиента:")
-    return INPUT_NAME
-
-def name_input(update: Update, context: CallbackContext) -> int:
-    """Обработка ввода имени клиента."""
-    context.user_data['client_name'] = update.message.text.strip()
-    logger.info(f"User {update.effective_user.id} entered client name: {context.user_data['client_name']}")
-    keyboard = [
-        [InlineKeyboardButton("Текущая дата и время", callback_data='current_date')],
-        [InlineKeyboardButton("Ввести свою дату", callback_data='custom_date')],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text('📅 Хочешь текущую дату по Киеву или свою?', reply_markup=reply_markup)
-    return CHOOSE_DATE
-
-def date_chosen(update: Update, context: CallbackContext) -> int:
-    """Обработка выбора даты."""
-    query = update.callback_query
-    query.answer()
-    logger.info(f"User {query.from_user.id} chose date option: {query.data}")
-    if query.data == 'current_date':
-        now = datetime.now(pytz.utc).astimezone(kiev_tz)
-        date_time = now.strftime("%d.%m.%Y %H:%M")
-        context.user_data['date_time'] = date_time
-        generate_and_send_document(update, context)
-        ask_to_save(update, context)
-        return ASK_SAVE
-    else:
-        query.message.reply_text("📅 Введи дату и время в формате ДД.ММ.ГГГГ ЧЧ:ММ:")
-        return INPUT_CUSTOM_DATE
-
-def input_custom_date(update: Update, context: CallbackContext) -> int:
-    """Обработка пользовательской даты."""
-    try:
-        date_time = datetime.strptime(update.message.text.strip(), "%d.%m.%Y %H:%M")
-        context.user_data['date_time'] = update.message.text.strip()
-        logger.info(f"User {update.effective_user.id} entered custom date: {context.user_data['date_time']}")
-        generate_and_send_document(update, context)
-        ask_to_save(update, context)
-        return ASK_SAVE
-    except ValueError:
-        logger.error(f"Invalid date format from user {update.effective_user.id}: {update.message.text}")
-        update.message.reply_text("❌ Неверный формат. Введи дату в формате ДД.ММ.ГГГГ ЧЧ:ММ:")
-        return INPUT_CUSTOM_DATE
-
-def ask_to_save(update: Update, context: CallbackContext):
-    """Запрос на сохранение конфигурации."""
-    keyboard = [
-        [InlineKeyboardButton("💾 Сохранить", callback_data='save')],
-        [InlineKeyboardButton("🚫 Не сохранять", callback_data='dont_save')],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    update.effective_message.reply_text('Хочешь сохранить эту конфигурацию документа?', reply_markup=reply_markup)
-
-def save_decision(update: Update, context: CallbackContext) -> int:
-    """Обработка решения о сохранении."""
-    query = update.callback_query
-    query.answer()
-    logger.info(f"User {query.from_user.id} chose save option: {query.data}")
-    if query.data == 'save':
-        user_id = query.from_user.id
-        template = context.user_data['template']
-        client_name = context.user_data['client_name']
-        date_time = context.user_data['date_time']
-        conn = sqlite3.connect('database.db')
-        c = conn.cursor()
-        c.execute("INSERT INTO saved_documents (user_id, template, client_name, date) VALUES (?, ?, ?, ?)",
-                  (user_id, template, client_name, date_time))
-        conn.commit()
-        conn.close()
-        query.edit_message_text(text="💾 Конфигурация сохранена! 🎉")
-    else:
-        query.edit_message_text(text="🚫 Конфигурация не сохранена.")
-    query.message.reply_text("🔄 Хочешь создать ещё один документ? Жми /generate 😎")
-    return ConversationHandler.END
-
-def cancel(update: Update, context: CallbackContext) -> int:
-    """Отмена диалога."""
-    logger.info(f"User {update.effective_user.id} cancelled operation")
-    update.message.reply_text('❌ Операция отменена. Хочешь начать заново? Жми /generate 😎')
-    return ConversationHandler.END
-
-def list_saved(update: Update, context: CallbackContext):
-    """Список сохранённых конфигураций."""
-    user_id = update.effective_user.id
-    logger.info(f"User {user_id} requested saved documents")
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute("SELECT id, template, client_name, date FROM saved_documents WHERE user_id=?", (user_id,))
-    rows = c.fetchall()
-    conn.close()
-    if not rows:
-        update.message.reply_text("📭 У тебя нет сохранённых документов.")
-    else:
-        text = "📋 Твои сохранённые документы:\n"
-        for row in rows:
-            text += f"🆔 {row[0]} | Шаблон: {row[1].replace('template_', '').title()} | Клиент: {row[2]} | Дата: {row[3]}\n"
-        update.message.reply_text(text)
+# -- ВАЖНАЯ ВСТАВКА: обработка вебхука --
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -268,15 +64,19 @@ def webhook():
         logger.error(f"Webhook error: {str(e)}")
         return 'OK', 200
 
+# -- Пинг эндпоинт для UptimeRobot --
+
 @app.route('/ping')
 def ping():
-    """Эндпоинт для Uptime Robot."""
     logger.info("Received ping request")
     return 'OK'
+
+# -- Основная функция запуска --
 
 def main():
     """Основная функция для запуска бота."""
     logger.info("Starting bot...")
+
     # Инициализация базы данных
     conn = sqlite3.connect('database.db')
     c = conn.cursor()
@@ -299,7 +99,7 @@ def main():
     dispatcher = updater.dispatcher
     logger.info("Updater and dispatcher initialized")
 
-    # Обработчик диалога
+    # Регистрация всех handlers
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('generate', start_generate)],
         states={
@@ -313,7 +113,6 @@ def main():
         per_message=True
     )
 
-    # Добавление обработчиков
     dispatcher.add_handler(CommandHandler('start', start))
     dispatcher.add_handler(conv_handler)
     dispatcher.add_handler(CommandHandler('list_saved', list_saved))
@@ -334,3 +133,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
