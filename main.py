@@ -1,128 +1,62 @@
 import os
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    MessageHandler,
-    ContextTypes,
-    filters
-)
-import config
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from docx_generator import generate_pdf
 
-# Настройка логирования
+# Логирование (по желанию для отладки)
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
-# Состояния для контекста пользователя
-SELECTING_TEMPLATE = 1
-ENTERING_TEXT = 2
+# Обработчик команды /start
+async def start(update, context):
+    await update.message.reply_text("Введите имя клиента для создания документа:")
 
-# --- Обработчики команд и колбэков ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "👋 *Привет! Чтобы создать документ, напиши /generate.*",
-        parse_mode="Markdown"
-    )
-
-async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES]
-    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-    await update.message.reply_text(
-        "📄 *Выберите шаблон:*",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    context.user_data["state"] = SELECTING_TEMPLATE
-
-async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES]
-    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
-    await query.message.edit_text(
-        "📄 *Выберите шаблон:*",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-    context.user_data["state"] = SELECTING_TEMPLATE
-
-async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    name = query.data.replace("template_", "")
-    if name not in config.TEMPLATES:
-        await query.message.edit_text("⚠️ Ошибка: Шаблон не найден.")
-        return
-    context.user_data["template"] = name
-    context.user_data["state"] = ENTERING_TEXT
-    await query.message.edit_text(
-        f"✅ Выбран шаблон: *{name}*\n\nВведите имя клиента:",
-        parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")],
-        ])
-    )
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    context.user_data.clear()
-    await query.message.edit_text(
-        "❌ Отменено. Чтобы начать снова, нажмите /start",
-        parse_mode="Markdown"
-    )
-
-async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if "template" not in context.user_data:
-        await update.message.reply_text(
-            "⚠️ Сначала выберите шаблон через /generate.",
-            parse_mode="Markdown"
-        )
-        return
-
+# Обработчик текстовых сообщений: считаем любой ввод именем клиента
+async def create_document(update, context):
     client_name = update.message.text.strip()
-    template_name = context.user_data["template"]
+    if not client_name:
+        await update.message.reply_text("Имя не может быть пустым.")
+        return
+
+    # Получаем текущую дату в нужном формате, например:
+    from datetime import datetime
+    date_str = datetime.now().strftime("%d.%m.%Y")
+
     try:
-        template_path = config.TEMPLATES[template_name]
-        pdf_path = generate_pdf(template_path, client_name)
-        filename = f"{client_name}.pdf"
-        with open(pdf_path, "rb") as f:
-            await update.message.reply_document(document=f, filename=filename)
-        os.remove(pdf_path)
-        await update.message.reply_text(
-            "✅ Документ успешно создан! Напишите новое имя клиента или /generate для смены шаблона.",
-            parse_mode="Markdown"
-        )
+        # Генерируем PDF-файл по DOCX-шаблону
+        pdf_bytes = await generate_pdf(client_name, date_str)
+        # Отправляем PDF пользователю
+        await update.message.reply_document(pdf_bytes, filename=f"Document_{client_name}.pdf")
     except Exception as e:
-        logger.error(f"Ошибка при создании документа: {e}")
-        await update.message.reply_text("❌ Ошибка при создании документа.")
+        logging.exception("Ошибка при генерации документа")
+        await update.message.reply_text(f"Ошибка при создании документа: {e}")
 
-# --- Запуск бота с webhook ---
-def main() -> None:
-    # Создаем приложение
-    application = Application.builder().token(config.BOT_TOKEN).build()
+def main():
+    # Токен бота и URL вебхука (область Render задаётся через переменную окружения)
+    TOKEN = os.environ["BOT_TOKEN"]
+    SERVICE_URL = os.environ.get("RENDER_SERVICE")  # например, myservice.onrender.com
+    PORT = int(os.environ.get("PORT", 443))
 
-    # Регистрируем обработчики
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("generate", generate))
-    application.add_handler(CallbackQueryHandler(select_template, pattern="^select_template$"))
-    application.add_handler(CallbackQueryHandler(template_selected, pattern="^template_"))
-    application.add_handler(CallbackQueryHandler(cancel, pattern="^cancel$"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text))
+    # Сборка приложения с асинхронным запуском
+    # Регистрируем функцию on_startup для установки вебхука
+    async def on_startup(app):
+        webhook_url = f"https://{SERVICE_URL}/{TOKEN}"
+        info = await app.bot.get_webhook_info()
+        if info.url != webhook_url:
+            # Асинхронно устанавливаем вебхук (согласно примеру использования post_init в PTB v21)&#8203;:contentReference[oaicite:0]{index=0}
+            await app.bot.set_webhook(url=webhook_url)
+            logging.info(f"Webhook установлен: {webhook_url}")
 
-    # Устанавливаем webhook
-    application.bot.set_webhook(url=config.WEBHOOK_URL)
-    port = int(os.environ.get("PORT", 5000))
+    app = Application.builder().token(TOKEN).post_init(on_startup).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, create_document))
 
-    # Запускаем webhook-сервер
-    application.run_webhook(
+    # Запускаем приложение через Webhook. 
+    # Используем url_path (а не webhook_path) и передаём полный webhook_url&#8203;:contentReference[oaicite:1]{index=1}.
+    app.run_webhook(
         listen="0.0.0.0",
-        port=port,
-        webhook_path="/webhook"
+        port=PORT,
+        url_path=TOKEN,                                  # путь URL, совпадает с токеном
+        webhook_url=f"https://{SERVICE_URL}/{TOKEN}"
     )
 
 if __name__ == "__main__":
