@@ -1,6 +1,5 @@
 import logging
 import asyncio
-import os
 from aiohttp import web
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -22,17 +21,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    message = (
-        "📄 Чтобы создать документ:\n"
-        "1. Выберите шаблон через меню.\n"
-        "2. Введите имя клиента.\n\n"
-        "Если хотите начать заново — напишите /start."
-    )
-    keyboard = [
-        [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
-    ]
+    message = "📄 *Выберите шаблон:*"
+    keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES.keys()]
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     await update.message.reply_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
+    context.user_data["state"] = SELECTING_TEMPLATE
 
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
@@ -47,7 +40,7 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
-    message = "📄 *Выберите шаблон*"
+    message = "📄 *Выберите шаблон:*"
     keyboard = [[InlineKeyboardButton(name, callback_data=f"template_{name}")] for name in config.TEMPLATES.keys()]
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel")])
     await query.message.edit_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
@@ -67,7 +60,7 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")],
         ])
     )
 
@@ -85,6 +78,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info(f"Получено сообщение: {update.message.text}")
     if "template" not in context.user_data:
         await update.message.reply_text(
             "⚠️ Сначала выберите шаблон через меню.",
@@ -104,7 +98,7 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             await update.message.reply_document(document=f, filename=filename)
 
         await update.message.reply_text(
-            "✅ Документ успешно создан!",
+            "✅ Документ успешно создан!\n\nМожете ввести другое имя клиента для создания нового документа.",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("📄 Сменить шаблон", callback_data="select_template")],
                 [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
@@ -121,7 +115,7 @@ async def handle_webhook(request):
         await application.process_update(update)
         return web.Response(text="ok")
     except Exception as e:
-        logger.exception("Ошибка в webhook:")
+        logger.exception("Ошибка вебхука:")
         return web.Response(status=500, text="error")
 
 async def home(request):
@@ -149,11 +143,10 @@ async def main():
 
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get("PORT", 5000))
-    site = web.TCPSite(runner, "0.0.0.0", port=port)
+    site = web.TCPSite(runner, "0.0.0.0", port=5000)
     await site.start()
 
-    logger.info(f"Бот успешно запущен на порту {port}")
+    logger.info("Бот успешно запущен на порту 5000")
     while True:
         await asyncio.sleep(3600)
 
