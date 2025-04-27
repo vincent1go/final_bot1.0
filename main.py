@@ -1,6 +1,5 @@
 # main.py
 
-import os
 import logging
 import asyncio
 from aiohttp import web
@@ -63,7 +62,7 @@ async def template_selected(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("🔄 Сменить шаблон", callback_data="select_template")],
-            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")]
+            [InlineKeyboardButton("❌ Отмена", callback_data="cancel")],
         ])
     )
 
@@ -95,9 +94,9 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     template_name = context.user_data["template"]
     try:
         template_path = config.TEMPLATES[template_name]
-        docx_path = generate_pdf(template_path, client_name)
+        pdf_path = generate_pdf(template_path, client_name)
         filename = f"{client_name}.docx"
-        with open(docx_path, "rb") as f:
+        with open(pdf_path, "rb") as f:
             await update.message.reply_document(document=f, filename=filename)
 
         await update.message.reply_text(
@@ -108,7 +107,7 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             ])
         )
     except Exception as e:
-        logger.error(f"Ошибка генерации документа: {e}")
+        logger.error(f"Ошибка генерации DOCX: {e}")
         await update.message.reply_text("❌ Ошибка при создании документа.")
 
 async def handle_webhook(request):
@@ -123,6 +122,9 @@ async def handle_webhook(request):
 
 async def home(request):
     return web.Response(text="Бот работает!")
+
+async def ping(request):
+    return web.Response(text="pong")  # ответ на /ping для Render
 
 async def main():
     global application
@@ -143,14 +145,14 @@ async def main():
     app = web.Application()
     app.router.add_post("/webhook", handle_webhook)
     app.router.add_get("/", home)
+    app.router.add_get("/ping", ping)  # <-- добавлен
 
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get("PORT", 5000))  # <-- Важно! Берём порт из переменной окружения
-    site = web.TCPSite(runner, "0.0.0.0", port=port)
+    site = web.TCPSite(runner, "0.0.0.0", port=5000)
     await site.start()
 
-    logger.info(f"Бот успешно запущен на порту {port}")
+    logger.info("Бот успешно запущен на порту 5000")
     while True:
         await asyncio.sleep(3600)
 
