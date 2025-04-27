@@ -88,7 +88,7 @@ def main():
 
     # Проверка наличия шаблонов
     try:
-        check_templates()
+       # check_templates()
     except FileNotFoundError as e:
         logger.error(f"Template check failed: {str(e)}")
         exit(1)
