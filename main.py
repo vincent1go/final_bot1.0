@@ -1,162 +1,106 @@
 import os
-import sqlite3
+import re
+import fitz  # PyMuPDF
 import pytz
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import (
-    Updater, CommandHandler, CallbackQueryHandler, MessageHandler,
-    Filters, ConversationHandler, CallbackContext
-)
-from docx import Document
-from flask import Flask, request
+from datetime import datetime
 import logging
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Flask-приложение для вебхуков
-app = Flask(__name__)
+# Цвет текста (тёмно-серый)
+COLOR = (69 / 255, 69 / 255, 69 / 255)
 
-# Глобальные переменные
-updater = None
-dispatcher = None
+def текущая_дата_лондон():
+    return datetime.now(pytz.timezone("Europe/London")).strftime("%d.%m.%Y")
 
-# Токен бота и вебхук
-TOKEN = os.environ.get('BOT_TOKEN', '7511704960:AAFKDWgg2-cAzRxywX1gXK47OQRWJi72qGw')
-WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'https://final-bot1-0.onrender.com/webhook')
+def очистить_имя_файла(text):
+    return re.sub(r"[^\w\s-]", "", text, flags=re.UNICODE).strip()
 
-# Состояния диалога
-SELECT_TEMPLATE, INPUT_NAME, CHOOSE_DATE, INPUT_CUSTOM_DATE, ASK_SAVE = range(5)
+def заменить_текст_на_странице(page, старый_текст, новый_текст, is_date=False, только_первые_n=0):
+    области = page.search_for(старый_текст)
+    if not области:
+        logger.warning(f"Текст '{старый_текст}' не найден на странице {page.number + 1}")
+        return False
 
-# Часовой пояс Киева
-kiev_tz = pytz.timezone('Europe/Kiev')
+    if только_первые_n > 0:
+        области = области[:только_первые_n]
 
-# Соответствие шаблонов
-TEMPLATE_FILES = {
-    'template_imperative': 'templates/template_imperative.docx',
-    'template_ur': 'templates/template_ur.docx',
-    'template_small_world': 'templates/template_small_world.docx',
-}
+    for область in области:
+        расширенная_область = fitz.Rect(
+            область.x0 - 5, область.y0 - 5,
+            область.x1 + 50, область.y1 + 5
+        )
+        page.add_redact_annot(расширенная_область, fill=(1, 1, 1))
+    page.apply_redactions()
 
-# ---- ФУНКЦИИ КОТОРЫЕ НУЖНЫ ----
+    for i, область in enumerate(области):
+        смещение_y = 15 if is_date else 0
+        if i == 1 and len(области) > 1:
+            предыдущая_область = области[i - 1]
+            if abs(область.y0 - предыдущая_область.y0) < 10:
+                смещение_y += 15
+        page.insert_text(
+            (область.x0, область.y0 + смещение_y),
+            новый_текст,
+            fontname="helv",
+            fontsize=11,
+            color=COLOR
+        )
+    return True
 
-def start(update: Update, context: CallbackContext):
-    """Обработка команды /start."""
-    update.message.reply_text('👋 Привет! Чтобы создать документ, напиши /generate.')
+def generate_pdf(путь_к_шаблону: str, текст: str) -> str:
+    logger.info(f"Генерация PDF с шаблоном '{путь_к_шаблону}' и текстом '{текст}'")
+    дата = текущая_дата_лондон()
+    имя_файла = очистить_имя_файла(текст) or "результат"
+    путь_к_выходному_файлу = f"{имя_файла}.pdf"
 
-def start_generate(update: Update, context: CallbackContext):
-    """Обработка команды /generate."""
-    keyboard = [
-        [
-            InlineKeyboardButton("Императив", callback_data='template_imperative'),
-            InlineKeyboardButton("УР", callback_data='template_ur'),
-            InlineKeyboardButton("Small World", callback_data='template_small_world'),
-        ]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    update.message.reply_text('📄 Выберите шаблон для создания документа:', reply_markup=reply_markup)
-
-def template_selected(update: Update, context: CallbackContext):
-    pass  # здесь будет твоя обработка выбора шаблона
-
-def name_input(update: Update, context: CallbackContext):
-    pass  # здесь обработка имени
-
-def date_chosen(update: Update, context: CallbackContext):
-    pass  # здесь выбор даты
-
-def input_custom_date(update: Update, context: CallbackContext):
-    pass  # здесь ввод своей даты
-
-def save_decision(update: Update, context: CallbackContext):
-    pass  # сохранить или нет
-
-def list_saved(update: Update, context: CallbackContext):
-    update.message.reply_text("📄 Список сохранённых документов (пока заглушка)")
-
-def cancel(update: Update, context: CallbackContext):
-    update.message.reply_text('❌ Операция отменена.')
-    return ConversationHandler.END
-
-# ---- ОБРАБОТЧИКИ FLASK ----
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    global dispatcher
     try:
-        update_data = request.get_json(force=True)
-        logger.info(f"Received update: {update_data}")
-        update = Update.de_json(update_data, updater.bot)
-        if update and dispatcher:
-            dispatcher.process_update(update)
-            logger.info("Update processed successfully")
+        doc = fitz.open(путь_к_шаблону)
+    except Exception as e:
+        logger.error(f"Ошибка открытия файла '{путь_к_шаблону}': {str(e)}")
+        raise
+
+    for page in doc:
+        logger.info(f"Обработка страницы {page.number + 1}")
+        if "contract_template3.pdf" in путь_к_шаблону:
+            if page.number == 0:
+                заменить_текст_на_странице(page, "Client: ", f"Client: {текст}")
+            if page.number == 12:
+                заменить_текст_на_странице(page, "DATE: ", f"DATE: {дата}", is_date=True)
+        elif "template_small_world.pdf" in путь_к_шаблону:
+            if page.number == 0:
+                заменить_текст_на_странице(page, "Client: ", f"Client: {текст}")
+            if page.number == 4:
+                заменить_текст_на_странице(page, "Date: ", f"Date: {дата}", is_date=True, только_первые_n=2)
         else:
-            logger.error("Failed to parse update or dispatcher not initialized")
-        return 'OK'
-    except Exception as e:
-        logger.error(f"Webhook error: {str(e)}")
-        return 'OK', 200
+            if page.number == 0:
+                заменить_текст_на_странице(page, "Client: ", f"Client: {текст}")
+            if page.number == 4:
+                заменить_текст_на_странице(page, "Date: ", f"Date: {дата}", is_date=True)
 
-@app.route('/ping')
-def ping():
-    logger.info("Received ping request")
-    return 'OK'
-
-# ---- MAIN ----
-
-def main():
-    logger.info("Starting bot...")
-
-    # Инициализация базы данных
-    conn = sqlite3.connect('database.db')
-    c = conn.cursor()
-    c.execute('''CREATE TABLE IF NOT EXISTS saved_documents
-                 (id INTEGER PRIMARY KEY, user_id INTEGER, template TEXT, client_name TEXT, date TEXT)''')
-    conn.commit()
-    conn.close()
-    logger.info("Database initialized")
-
-    # Проверка наличия шаблонов
     try:
-        open("templates.zip", "rb")
-    except FileNotFoundError as e:
-        logger.error(f"Template check failed: {str(e)}")
-        exit(1)
+        doc.save(путь_к_выходному_файлу, garbage=4, deflate=True, clean=True)
+        logger.info(f"PDF сохранен как '{путь_к_выходному_файлу}'")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения PDF: {str(e)}")
+        raise
+    finally:
+        doc.close()
 
-    global updater, dispatcher
-    updater = Updater(token=TOKEN, use_context=True)
-    dispatcher = updater.dispatcher
-    logger.info("Updater and dispatcher initialized")
+    return путь_к_выходному_файлу
 
-    # Регистрация обработчиков
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('generate', start_generate)],
-        states={
-            SELECT_TEMPLATE: [CallbackQueryHandler(template_selected)],
-            INPUT_NAME: [MessageHandler(Filters.text & ~Filters.command, name_input)],
-            CHOOSE_DATE: [CallbackQueryHandler(date_chosen)],
-            INPUT_CUSTOM_DATE: [MessageHandler(Filters.text & ~Filters.command, input_custom_date)],
-            ASK_SAVE: [CallbackQueryHandler(save_decision)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-        per_message=True
+# Новый обработчик для /generate
+async def generate(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    message = (
+        "📄 Чтобы создать документ:\n"
+        "1. Выберите шаблон через меню.\n"
+        "2. Введите имя клиента.\n\n"
+        "Если хотите начать заново — напишите /start."
     )
-
-    dispatcher.add_handler(CommandHandler('start', start))
-    dispatcher.add_handler(conv_handler)
-    dispatcher.add_handler(CommandHandler('list_saved', list_saved))
-    logger.info("Handlers registered")
-
-    try:
-        updater.bot.set_webhook(url=WEBHOOK_URL)
-        logger.info(f"Webhook set to {WEBHOOK_URL}")
-    except Exception as e:
-        logger.error(f"Failed to set webhook: {str(e)}")
-        exit(1)
-
-    port = int(os.environ.get('PORT', 5000))
-    logger.info(f"Starting Flask on port {port}")
-    app.run(host='0.0.0.0', port=port)
-
-if __name__ == '__main__':
-    main()
+    keyboard = [
+        [InlineKeyboardButton("📄 Выбрать шаблон", callback_data="select_template")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")]
+    ]
+    await update.message.reply_text(message, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(keyboard))
