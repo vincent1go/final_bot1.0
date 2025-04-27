@@ -18,7 +18,7 @@ app = Flask(__name__)
 
 # Токен бота и вебхук из переменных окружения
 TOKEN = os.environ.get('BOT_TOKEN', '7511704960:AAFKDWgg2-cAzRxywX1gXK47OQRWJi72qGw')
-WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'https://your-app.onrender.com/webhook')
+WEBHOOK_URL = os.environ.get('WEBHOOK_URL', 'https://final-bot1-0.onrender.com/webhook')
 
 # Состояния диалога
 SELECT_TEMPLATE, INPUT_NAME, CHOOSE_DATE, INPUT_CUSTOM_DATE, ASK_SAVE = range(5)
