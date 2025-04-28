@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Состояния бота
-SELECT_TEMPLATE, INPUT_NAME, CHANGE_DATE, INPUT_NEW_DATE, VIEW_BOOKMARKS, GENERATE_ANOTHER = range(6)
+MAIN_MENU, SELECT_TEMPLATE, INPUT_NAME, CHANGE_DATE, INPUT_NEW_DATE, GENERATE_ANOTHER, VIEW_BOOKMARKS = range(7)
 
 # Настройка базы данных
 def init_db():
@@ -141,7 +141,33 @@ def convert_to_pdf(doc_path, client_name):
         logger.error(f"Неизвестная ошибка при конвертации: {e}")
         raise
 
+# Главное меню
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("Создать документ", callback_data="select_template")],
+        [InlineKeyboardButton("Мои сохранённые", callback_data="view_bookmarks")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.message:
+        await update.message.reply_text(
+            "Добро пожаловать! Выберите действие:",
+            reply_markup=reply_markup
+        )
+    else:
+        await update.callback_query.message.reply_text(
+            "Добро пожаловать! Выберите действие:",
+            reply_markup=reply_markup
+        )
+    return MAIN_MENU
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return await main_menu(update, context)
+
+async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
     keyboard = [
         [InlineKeyboardButton("UR Recruitment", callback_data="ur_recruitment")],
         [InlineKeyboardButton("Small World", callback_data="small_world")],
@@ -149,13 +175,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await update.message.reply_text(
-        "Добро пожаловать! Выберите шаблон:",
+    await query.message.reply_text(
+        "Выберите шаблон документа:",
         reply_markup=reply_markup
     )
     return SELECT_TEMPLATE
 
-async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_template_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
@@ -199,12 +225,14 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
             [InlineKeyboardButton("Сгенерировать ещё один", callback_data="generate_another")],
-            [InlineKeyboardButton("Начать заново", callback_data="start_over")],
+            [InlineKeyboardButton("Другие шаблоны", callback_data="select_template")],
+            [InlineKeyboardButton("Главное меню", callback_data="main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "Документ сгенерирован! Что хотите сделать дальше?",
+            "Документ сгенерирован! Что хотите сделать дальше?\n"
+            "Или введите имя нового клиента для создания другого документа с текущим шаблоном.",
             reply_markup=reply_markup
         )
         return CHANGE_DATE
@@ -284,12 +312,14 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату снова", callback_data="change_date")],
             [InlineKeyboardButton("Сгенерировать ещё один", callback_data="generate_another")],
-            [InlineKeyboardButton("Начать заново", callback_data="start_over")],
+            [InlineKeyboardButton("Другие шаблоны", callback_data="select_template")],
+            [InlineKeyboardButton("Главное меню", callback_data="main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "Документ обновлен с новой датой! Что хотите сделать дальше?",
+            "Документ обновлен с новой датой! Что хотите сделать дальше?\n"
+            "Или введите имя нового клиента для создания другого документа с текущим шаблоном.",
             reply_markup=reply_markup
         )
         return CHANGE_DATE
@@ -337,12 +367,14 @@ async def receive_another_name(update: Update, context: ContextTypes.DEFAULT_TYP
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
             [InlineKeyboardButton("Сгенерировать ещё один", callback_data="generate_another")],
-            [InlineKeyboardButton("Начать заново", callback_data="start_over")],
+            [InlineKeyboardButton("Другие шаблоны", callback_data="select_template")],
+            [InlineKeyboardButton("Главное меню", callback_data="main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "Документ сгенерирован! Что хотите сделать дальше?",
+            "Документ сгенерирован! Что хотите сделать дальше?\n"
+            "Или введите имя нового клиента для создания другого документа с текущим шаблоном.",
             reply_markup=reply_markup
         )
         return CHANGE_DATE
@@ -353,26 +385,8 @@ async def receive_another_name(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         return ConversationHandler.END
 
-async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    context.user_data.clear()
-    keyboard = [
-        [InlineKeyboardButton("UR Recruitment", callback_data="ur_recruitment")],
-        [InlineKeyboardButton("Small World", callback_data="small_world")],
-        [InlineKeyboardButton("Imperative", callback_data="imperative")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.message.reply_text(
-        "Выберите шаблон:",
-        reply_markup=reply_markup
-    )
-    return SELECT_TEMPLATE
-
 async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+    user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
     try:
         conn = sqlite3.connect("bookmarks.db")
         c = conn.cursor()
@@ -384,9 +398,13 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
         
         if not bookmarks:
-            await update.message.reply_text("У вас нет сохраненных закладок.")
-            return ConversationHandler.END
+            if update.message:
+                await update.message.reply_text("У вас нет сохранённых документов.")
+            else:
+                await update.callback_query.message.reply_text("У вас нет сохранённых документов.")
+            return await main_menu(update, context)
         
+        logger.info(f"Извлечённые закладки: {bookmarks}")
         keyboard = [
             [
                 InlineKeyboardButton(
@@ -396,17 +414,27 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             for client_name, template_name, date in bookmarks
         ]
+        keyboard.append([InlineKeyboardButton("Главное меню", callback_data="main_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await update.message.reply_text(
-            "Выберите сохраненный документ для повторной генерации:",
-            reply_markup=reply_markup
-        )
+        if update.message:
+            await update.message.reply_text(
+                "Выберите документ для повторного создания:",
+                reply_markup=reply_markup
+            )
+        else:
+            await update.callback_query.message.reply_text(
+                "Выберите документ для повторного создания:",
+                reply_markup=reply_markup
+            )
         return VIEW_BOOKMARKS
     except Exception as e:
         logger.error(f"Ошибка при просмотре закладок: {e}")
-        await update.message.reply_text("Ошибка при загрузке закладок. Попробуйте снова.")
-        return ConversationHandler.END
+        if update.message:
+            await update.message.reply_text("Не удалось загрузить сохранённые документы. Попробуйте снова.")
+        else:
+            await update.callback_query.message.reply_text("Не удалось загрузить сохранённые документы. Попробуйте снова.")
+        return await main_menu(update, context)
 
 async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -441,12 +469,14 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
             [InlineKeyboardButton("Сгенерировать ещё один", callback_data="generate_another")],
-            [InlineKeyboardButton("Начать заново", callback_data="start_over")],
+            [InlineKeyboardButton("Другие шаблоны", callback_data="select_template")],
+            [InlineKeyboardButton("Главное меню", callback_data="main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.message.reply_text(
-            "Документ повторно сгенерирован! Что хотите сделать дальше?",
+            "Документ повторно сгенерирован! Что хотите сделать дальше?\n"
+            "Или введите имя нового клиента для создания другого документа с текущим шаблоном.",
             reply_markup=reply_markup
         )
         return CHANGE_DATE
@@ -460,10 +490,10 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Операция отменена.")
     context.user_data.clear()
-    return ConversationHandler.END
+    return await main_menu(update, context)
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Update {update} caused error {context.error}")
+    logger.error(f"Update {update} вызвал ошибку: {context.error}\nПолный traceback: {traceback.format_exc()}")
     if update:
         if update.message:
             await update.message.reply_text(
@@ -483,19 +513,32 @@ def main():
         )
         
         conv_handler = ConversationHandler(
-            entry_points=[CommandHandler("start", start), CommandHandler("bookmarks", view_bookmarks)],
+            entry_points=[
+                CommandHandler("start", start),
+                CommandHandler("bookmarks", view_bookmarks),
+            ],
             states={
-                SELECT_TEMPLATE: [CallbackQueryHandler(select_template)],
+                MAIN_MENU: [
+                    CallbackQueryHandler(select_template, pattern="select_template"),
+                    CallbackQueryHandler(view_bookmarks, pattern="view_bookmarks"),
+                    CallbackQueryHandler(main_menu, pattern="main_menu"),
+                ],
+                SELECT_TEMPLATE: [CallbackQueryHandler(handle_template_selection)],
                 INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
                 CHANGE_DATE: [
                     CallbackQueryHandler(bookmark, pattern="bookmark"),
                     CallbackQueryHandler(change_date, pattern="change_date"),
                     CallbackQueryHandler(generate_another, pattern="generate_another"),
-                    CallbackQueryHandler(start_over, pattern="start_over"),
+                    CallbackQueryHandler(select_template, pattern="select_template"),
+                    CallbackQueryHandler(main_menu, pattern="main_menu"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name),
                 ],
                 INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
                 GENERATE_ANOTHER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name)],
-                VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*")],
+                VIEW_BOOKMARKS: [
+                    CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*"),
+                    CallbackQueryHandler(main_menu, pattern="main_menu"),
+                ],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
         )
@@ -517,7 +560,7 @@ def main():
             webhook_url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
         )
     except Exception as e:
-        logger.error(f"Ошибка при запуске приложения: {e}")
+        logger.error(f"Ошибка при запуске приложения: {e}\nПолный traceback: {traceback.format_exc()}")
         raise
 
 if __name__ == "__main__":
