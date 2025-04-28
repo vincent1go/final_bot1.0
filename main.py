@@ -5,6 +5,8 @@ import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import docx
+from docx.oxml.ns import qn
+from docx.text.run import Run
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -60,28 +62,46 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         client_replaced = False
         for para in doc.paragraphs:
             if "Client:" in para.text:
-                if template_key == "small_world":
-                    para.text = f"Client: {client_name}"
-                else:
-                    para.text = para.text.replace("Client:", f"Client: {client_name}")
-                client_replaced = True
+                # Разбиваем параграф на части и заменяем только текст
+                new_runs = []
+                for run in para.runs:
+                    if "Client:" in run.text:
+                        run.text = run.text.replace("Client:", f"Client: {client_name}")
+                        client_replaced = True
+                    new_runs.append(run)
+                if client_replaced:
+                    # Очищаем параграф и добавляем обновлённые runs
+                    para.clear()
+                    for run in new_runs:
+                        new_run = para.add_run(run.text)
+                        new_run.bold = run.bold
+                        new_run.italic = run.italic
+                        new_run.underline = run.underline
+                        new_run.font.size = run.font.size
                 break
         if not client_replaced:
             logger.warning(f"Поле 'Client:' не найдено в {doc_path}")
         
         # Замена Date (дважды на последней странице)
         date_replaced_count = 0
-        last_page_paragraphs = []
-        current_page = []
-        
         for para in doc.paragraphs:
-            current_page.append(para)
-        last_page_paragraphs = current_page
-        
-        for para in last_page_paragraphs:
             if ("Date:" in para.text or "DATE:" in para.text) and date_replaced_count < 2:
-                para.text = para.text.replace("Date:", f"Date: {date_str}")
-                para.text = para.text.replace("DATE:", f"Date: {date_str}")
+                # Разбиваем параграф на части и заменяем только текст
+                new_runs = []
+                for run in para.runs:
+                    if "Date:" in run.text:
+                        run.text = run.text.replace("Date:", f"Date: {date_str}")
+                    elif "DATE:" in run.text:
+                        run.text = run.text.replace("DATE:", f"Date: {date_str}")
+                    new_runs.append(run)
+                # Очищаем параграф и добавляем обновлённые runs
+                para.clear()
+                for run in new_runs:
+                    new_run = para.add_run(run.text)
+                    new_run.bold = run.bold
+                    new_run.italic = run.italic
+                    new_run.underline = run.underline
+                    new_run.font.size = run.font.size
                 date_replaced_count += 1
         if date_replaced_count != 2:
             logger.warning(f"Ожидалось 2 замены даты, выполнено {date_replaced_count} в {doc_path}")
