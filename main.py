@@ -17,6 +17,7 @@ from telegram.ext import (
 )
 import sqlite3
 import logging
+from dateutil.parser import parse
 
 # Настройка логирования
 logging.basicConfig(
@@ -25,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Состояния бота
-INPUT_NAME, SELECT_TEMPLATE, CHANGE_DATE, INPUT_NEW_DATE, VIEW_BOOKMARKS = range(5)
+SELECT_TEMPLATE, INPUT_NAME, CHANGE_DATE, INPUT_NEW_DATE, VIEW_BOOKMARKS, GENERATE_ANOTHER = range(6)
 
 # Настройка базы данных
 def init_db():
@@ -48,7 +49,7 @@ TEMPLATES = {
     "imperative": "template_imperative.docx",
 }
 
-def replace_client_and_date(doc_path, client_name, date_str):
+def replace_client_and_date(doc_path, client_name, date_str, template_key):
     try:
         if not os.path.exists(doc_path):
             raise FileNotFoundError(f"Шаблон {doc_path} не найден")
@@ -59,22 +60,34 @@ def replace_client_and_date(doc_path, client_name, date_str):
         client_replaced = False
         for para in doc.paragraphs:
             if "Client:" in para.text:
-                para.text = para.text.replace("Client:", f"Client: {client_name}")
+                if template_key == "small_world":
+                    # Очистка строки перед "Client:" для Small World
+                    para.text = f"Client: {client_name}"
+                else:
+                    para.text = para.text.replace("Client:", f"Client: {client_name}")
                 client_replaced = True
                 break
         if not client_replaced:
             logger.warning(f"Поле 'Client:' не найдено в {doc_path}")
         
-        # Замена Date
-        date_replaced = False
+        # Замена Date (дважды на последней странице)
+        date_replaced_count = 0
+        last_page_paragraphs = []
+        current_page = []
+        
+        # Собираем абзацы, предполагая, что последняя страница — это последние абзацы
         for para in doc.paragraphs:
-            if "Date:" in para.text or "DATE:" in para.text:
+            current_page.append(para)
+        last_page_paragraphs = current_page
+        
+        # Ищем "Date:" или "DATE:" в последних абзацах и заменяем дважды
+        for para in last_page_paragraphs:
+            if ("Date:" in para.text or "DATE:" in para.text) and date_replaced_count < 2:
                 para.text = para.text.replace("Date:", f"Date: {date_str}")
                 para.text = para.text.replace("DATE:", f"Date: {date_str}")
-                date_replaced = True
-                break
-        if not date_replaced:
-            logger.warning(f"Поле 'Date:' или 'DATE:' не найдено в {doc_path}")
+                date_replaced_count += 1
+        if date_replaced_count != 2:
+            logger.warning(f"Ожидалось 2 замены даты, выполнено {date_replaced_count} в {doc_path}")
         
         # Сохранение измененного документа
         temp_path = f"temp_{uuid.uuid4()}.docx"
@@ -91,12 +104,13 @@ def convert_to_pdf(doc_path, client_name):
         if not os.path.exists(doc_path):
             raise FileNotFoundError(f"Временный файл {doc_path} не найден")
         
-        # Вызов libreoffice для конвертации
+        # Вызов libreoffice для конвертации с ускорением
         logger.info(f"Запуск конвертации {doc_path} в PDF")
         subprocess.run(
             [
                 "libreoffice",
                 "--headless",
+                "--nofirststartwizard",  # Ускорение запуска LibreOffice
                 "--convert-to",
                 "pdf",
                 "--outdir",
@@ -104,7 +118,7 @@ def convert_to_pdf(doc_path, client_name):
                 doc_path
             ],
             check=True,
-            timeout=60  # Увеличенный таймаут
+            timeout=30  # Уменьшенный таймаут для ускорения
         )
         # Переименование файла
         temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
@@ -128,15 +142,6 @@ def convert_to_pdf(doc_path, client_name):
         raise
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Добро пожаловать! Введите имя клиента:"
-    )
-    return INPUT_NAME
-
-async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    client_name = update.message.text.strip()
-    context.user_data["client_name"] = client_name
-    
     keyboard = [
         [InlineKeyboardButton("UR Recruitment", callback_data="ur_recruitment")],
         [InlineKeyboardButton("Small World", callback_data="small_world")],
@@ -145,7 +150,7 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        f"Принято! Имя клиента: {client_name}\nВыберите шаблон:",
+        "Добро пожаловать! Выберите шаблон:",
         reply_markup=reply_markup
     )
     return SELECT_TEMPLATE
@@ -157,7 +162,14 @@ async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
     template_key = query.data
     context.user_data["template_key"] = template_key
     
-    client_name = context.user_data["client_name"]
+    await query.message.reply_text("Введите имя клиента:")
+    return INPUT_NAME
+
+async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    client_name = update.message.text.strip()
+    context.user_data["client_name"] = client_name
+    
+    template_key = context.user_data["template_key"]
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
     # Получение текущей даты в Киеве
@@ -167,34 +179,35 @@ async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # Обработка документа
-        temp_doc = replace_client_and_date(template_path, client_name, current_date)
+        temp_doc = replace_client_and_date(template_path, client_name, current_date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
         # Отправка PDF
         with open(pdf_path, "rb") as f:
-            await query.message.reply_document(document=f, filename=f"{client_name}.pdf")
+            await update.message.reply_document(document=f, filename=f"{client_name}.pdf")
         
         # Очистка временных файлов
         os.remove(temp_doc)
         os.remove(pdf_path)
         logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
         
-        # Предложение добавить в закладки или изменить дату
+        # Предложение добавить в закладки, изменить дату или сгенерировать новый документ
         keyboard = [
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
+            [InlineKeyboardButton("Сгенерировать ещё один", callback_data="generate_another")],
             [InlineKeyboardButton("Начать заново", callback_data="start_over")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await query.message.reply_text(
+        await update.message.reply_text(
             "Документ сгенерирован! Что хотите сделать дальше?",
             reply_markup=reply_markup
         )
         return CHANGE_DATE
     except Exception as e:
-        logger.error(f"Ошибка в select_template: {e}")
-        await query.message.reply_text(
+        logger.error(f"Ошибка в receive_name: {e}")
+        await update.message.reply_text(
             "Произошла ошибка при создании документа. Попробуйте снова или свяжитесь с поддержкой."
         )
         return ConversationHandler.END
@@ -228,15 +241,17 @@ async def change_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    await query.message.reply_text("Введите новую дату (ГГГГ-ММ-ДД):")
+    await query.message.reply_text("Введите новую дату (например, 2025-04-28, 28.04.2025, 28/04/2025 и т.д.):")
     return INPUT_NEW_DATE
 
 async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    new_date = update.message.text.strip()
+    new_date_input = update.message.text.strip()
     try:
-        datetime.strptime(new_date, "%Y-%m-%d")
+        # Парсинг даты в любом формате
+        parsed_date = parse(new_date_input)
+        new_date = parsed_date.strftime("%Y-%m-%d")
     except ValueError:
-        await update.message.reply_text("Неверный формат даты. Используйте ГГГГ-ММ-ДД:")
+        await update.message.reply_text("Неверный формат даты. Попробуйте снова (например, 2025-04-28, 28.04.2025):")
         return INPUT_NEW_DATE
     
     context.user_data["date"] = new_date
@@ -246,7 +261,7 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         # Обработка документа с новой датой
-        temp_doc = replace_client_and_date(template_path, client_name, new_date)
+        temp_doc = replace_client_and_date(template_path, client_name, new_date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
         # Отправка PDF
@@ -262,6 +277,7 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату снова", callback_data="change_date")],
+            [InlineKeyboardButton("Сгенерировать ещё один", callback_data="generate_another")],
             [InlineKeyboardButton("Начать заново", callback_data="start_over")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -278,13 +294,73 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ConversationHandler.END
 
+async def generate_another(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    await query.message.reply_text("Введите имя нового клиента:")
+    return GENERATE_ANOTHER
+
+async def receive_another_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    client_name = update.message.text.strip()
+    context.user_data["client_name"] = client_name
+    
+    template_key = context.user_data["template_key"]
+    date = context.user_data["date"]
+    template_path = os.path.join("templates", TEMPLATES[template_key])
+    
+    try:
+        # Обработка документа
+        temp_doc = replace_client_and_date(template_path, client_name, date, template_key)
+        pdf_path = convert_to_pdf(temp_doc, client_name)
+        
+        # Отправка PDF
+        with open(pdf_path, "rb") as f:
+            await update.message.reply_document(document=f, filename=f"{client_name}.pdf")
+        
+        # Очистка временных файлов
+        os.remove(temp_doc)
+        os.remove(pdf_path)
+        logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
+        
+        # Предложение вариантов
+        keyboard = [
+            [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
+            [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
+            [InlineKeyboardButton("Сгенерировать ещё один", callback_data="generate_another")],
+            [InlineKeyboardButton("Начать заново", callback_data="start_over")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "Документ сгенерирован! Что хотите сделать дальше?",
+            reply_markup=reply_markup
+        )
+        return CHANGE_DATE
+    except Exception as e:
+        logger.error(f"Ошибка в receive_another_name: {e}")
+        await update.message.reply_text(
+            "Произошла ошибка при создании документа. Попробуйте снова или свяжитесь с поддержкой."
+        )
+        return ConversationHandler.END
+
 async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     context.user_data.clear()
-    await query.message.reply_text("Введите имя клиента:")
-    return INPUT_NAME
+    keyboard = [
+        [InlineKeyboardButton("UR Recruitment", callback_data="ur_recruitment")],
+        [InlineKeyboardButton("Small World", callback_data="small_world")],
+        [InlineKeyboardButton("Imperative", callback_data="imperative")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.message.reply_text(
+        "Выберите шаблон:",
+        reply_markup=reply_markup
+    )
+    return SELECT_TEMPLATE
 
 async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
@@ -335,7 +411,7 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
     try:
-        temp_doc = replace_client_and_date(template_path, client_name, date)
+        temp_doc = replace_client_and_date(template_path, client_name, date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
         # Отправка PDF
@@ -351,6 +427,7 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
         keyboard = [
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
+            [InlineKeyboardButton("Сгенерировать ещё один", callback_data="generate_another")],
             [InlineKeyboardButton("Начать заново", callback_data="start_over")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -395,14 +472,16 @@ def main():
         conv_handler = ConversationHandler(
             entry_points=[CommandHandler("start", start), CommandHandler("bookmarks", view_bookmarks)],
             states={
-                INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
                 SELECT_TEMPLATE: [CallbackQueryHandler(select_template)],
+                INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
                 CHANGE_DATE: [
                     CallbackQueryHandler(bookmark, pattern="bookmark"),
                     CallbackQueryHandler(change_date, pattern="change_date"),
+                    CallbackQueryHandler(generate_another, pattern="generate_another"),
                     CallbackQueryHandler(start_over, pattern="start_over"),
                 ],
                 INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
+                GENERATE_ANOTHER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name)],
                 VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*")],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
