@@ -16,8 +16,9 @@ COPY requirements.txt .
 COPY main.py .
 COPY templates/ templates/
 
-# Установка Python-зависимостей
-RUN pip install --no-cache-dir -r requirements.txt
+# Обновление pip и установка Python-зависимостей без кэша
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Команда для запуска бота
 CMD ["python", "main.py"]
