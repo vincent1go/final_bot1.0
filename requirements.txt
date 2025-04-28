@@ -1,3 +1,4 @@
-python-telegram-bot[webhooks]==20.7 
+python-telegram-bot[webhooks]==20.7
 python-docx==1.1.0
 python-dateutil==2.9.0
+flask==3.0.3
