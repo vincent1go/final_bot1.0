@@ -27,6 +27,12 @@ from aiohttp import web
 # Загрузка переменных окружения
 load_dotenv()
 
+# Проверка обязательных переменных
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    logging.critical("Токен бота не найден! Проверьте переменную окружения BOT_TOKEN")
+    exit(1)
+
 # Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -116,7 +122,7 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         
         # Замена даты
         date_replaced_count = 0
-        for para in doc.paragraphs[-4:]:  # Проверяем последние 4 абзаца
+        for para in doc.paragraphs[-4:]:
             if ("Date:" in para.text or "DATE:" in para.text) and date_replaced_count < 2:
                 para.text = para.text.replace("Date:", f"Date: {date_str}")
                 para.text = para.text.replace("DATE:", f"Date: {date_str}")
@@ -324,17 +330,21 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Повторная генерация из закладок"""
-    query = update.callback_query
-    await query.answer()
-    
-    _, client, template, date = query.data.split("_", 3)
-    context.user_data.update({
-        "client_name": client,
-        "template_key": template,
-        "date": date
-    })
-    
     try:
+        query = update.callback_query
+        await query.answer()
+        
+        parts = query.data.split("_", 3)
+        if len(parts) != 4:
+            raise ValueError("Неверный формат данных закладки")
+            
+        _, client, template, date = parts
+        context.user_data.update({
+            "client_name": client,
+            "template_key": template,
+            "date": date
+        })
+        
         template_path = os.path.join("templates", TEMPLATES[template])
         await query.message.reply_text("⏳ Восстанавливаю документ...")
         
@@ -354,7 +364,7 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.error(f"Ошибка восстановления: {e}")
         await query.message.reply_text("❌ Ошибка восстановления!")
-        return ConversationHandler.END
+        return await main_menu(update, context)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена операции"""
@@ -370,7 +380,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("⚠️ Произошла ошибка! Попробуйте снова.")
 
 # Настройка приложения
-application = Application.builder().token(os.getenv("BOT_TOKEN")).build()
+application = Application.builder().token(BOT_TOKEN).build()
 
 # Настройка диалогов
 conv_handler = ConversationHandler(
@@ -440,12 +450,16 @@ async def run_server():
 
 if __name__ == "__main__":
     # Проверка обязательных директорий
-    if not os.path.exists("templates"):
-        logger.error("Отсутствует директория templates!")
-        exit(1)
-        
-    # Запуск приложения
+    required_dirs = ["templates"]
+    for directory in required_dirs:
+        if not os.path.exists(directory):
+            logger.error(f"Отсутствует обязательная директория: {directory}!")
+            exit(1)
+    
     try:
         asyncio.run(run_server())
     except KeyboardInterrupt:
         logger.info("Бот остановлен")
+    except Exception as e:
+        logger.critical(f"Критическая ошибка: {e}")
+        exit(1)
