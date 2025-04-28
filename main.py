@@ -97,7 +97,9 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         doc.save(temp_path)
         logger.info(f"Создан временный файл: {temp_path}")
         return temp_path
-    except  raise
+    except Exception as e:
+        logger.error(f"Ошибка при обработке документа {doc_path}: {e}")
+        raise
 
 def convert_to_pdf(doc_path, client_name):
     pdf_path = f"{client_name}.pdf"
@@ -558,7 +560,7 @@ async def run_telegram_bot():
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=True  # Добавляем per_message=True, чтобы убрать предупреждение PTBUserWarning
+        per_message=True
     )
     
     application.add_handler(conv_handler)
