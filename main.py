@@ -96,7 +96,53 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         logger.info(f"Создан временный файл: {temp_path}")
         return temp_path
     except Exception as e:
-        logger.error(f"VPing для Uptime Robot
+        logger.error(f"Ошибка при обработке документа {doc_path}: {e}")
+        raise
+
+def convert_to_pdf(doc_path, client_name):
+    pdf_path = f"{client_name}.pdf"
+    try:
+        if not os.path.exists(doc_path):
+            raise FileNotFoundError(f"Временный файл {doc_path} не найден")
+        
+        # Вызов libreoffice для конвертации с ускорением
+        logger.info(f"Запуск конвертации {doc_path} в PDF")
+        subprocess.run(
+            [
+                "libreoffice",
+                "--headless",
+                "--nofirststartwizard",  # Ускорение запуска LibreOffice
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                os.path.dirname(doc_path) or ".",  # Убедимся, что outdir не пустой
+                doc_path
+            ],
+            check=True,
+            timeout=60  # Увеличенный таймаут
+        )
+        # Переименование файла
+        temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
+        if not os.path.exists(temp_pdf):
+            raise FileNotFoundError(f"PDF-файл {temp_pdf} не создан")
+        
+        os.rename(temp_pdf, pdf_path)
+        logger.info(f"PDF создан: {pdf_path}")
+        return pdf_path
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Ошибка конвертации в PDF: {e}")
+        raise
+    except FileNotFoundError as e:
+        logger.error(f"Файл не найден: {e}")
+        raise
+    except subprocess.TimeoutExpired:
+        logger.error("Превышено время ожидания для конвертации LibreOffice")
+        raise
+    except Exception as e:
+        logger.error(f"Неизвестная ошибка при конвертации: {e}")
+        raise
+
+# Ping для Uptime Robot
 async def ping(request):
     logger.info("Получен запрос на /ping от Uptime Robot")
     return web.Response(text="Bot is alive!")
@@ -286,7 +332,7 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка в receive_new_date: {e}")
         await update.message.reply_text(
-            "Произошла ошибка при создания документа. Попробуйте снова или свяжитесь с поддержкой."
+            "Произошла ошибка при создании документа. Попробуйте снова или свяжитесь с поддержкой."
         )
         return ConversationHandler.END
 
