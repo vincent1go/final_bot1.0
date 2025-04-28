@@ -49,30 +49,50 @@ TEMPLATES = {
 }
 
 def replace_client_and_date(doc_path, client_name, date_str):
-    doc = docx.Document(doc_path)
-    
-    # Замена Client
-    for para in doc.paragraphs:
-        if "Client:" in para.text:
-            para.text = para.text.replace("Client:", f"Client: {client_name}")
-            break
-    
-    # Замена Date
-    for para in doc.paragraphs:
-        if "Date:" in para.text:
-            para.text = para.text.replace("Date:", f"Date: {date_str}")
-        if "DATE:" in para.text:
-            para.text = para.text.replace("DATE:", f"Date: {date_str}")
-    
-    # Сохранение измененного документа
-    temp_path = f"temp_{uuid.uuid4()}.docx"
-    doc.save(temp_path)
-    return temp_path
+    try:
+        if not os.path.exists(doc_path):
+            raise FileNotFoundError(f"Шаблон {doc_path} не найден")
+        
+        doc = docx.Document(doc_path)
+        
+        # Замена Client
+        client_replaced = False
+        for para in doc.paragraphs:
+            if "Client:" in para.text:
+                para.text = para.text.replace("Client:", f"Client: {client_name}")
+                client_replaced = True
+                break
+        if not client_replaced:
+            logger.warning(f"Поле 'Client:' не найдено в {doc_path}")
+        
+        # Замена Date
+        date_replaced = False
+        for para in doc.paragraphs:
+            if "Date:" in para.text or "DATE:" in para.text:
+                para.text = para.text.replace("Date:", f"Date: {date_str}")
+                para.text = para.text.replace("DATE:", f"Date: {date_str}")
+                date_replaced = True
+                break
+        if not date_replaced:
+            logger.warning(f"Поле 'Date:' или 'DATE:' не найдено в {doc_path}")
+        
+        # Сохранение измененного документа
+        temp_path = f"temp_{uuid.uuid4()}.docx"
+        doc.save(temp_path)
+        logger.info(f"Создан временный файл: {temp_path}")
+        return temp_path
+    except Exception as e:
+        logger.error(f"Ошибка при обработке документа {doc_path}: {e}")
+        raise
 
 def convert_to_pdf(doc_path, client_name):
     pdf_path = f"{client_name}.pdf"
     try:
+        if not os.path.exists(doc_path):
+            raise FileNotFoundError(f"Временный файл {doc_path} не найден")
+        
         # Вызов libreoffice для конвертации
+        logger.info(f"Запуск конвертации {doc_path} в PDF")
         subprocess.run(
             [
                 "libreoffice",
@@ -83,17 +103,28 @@ def convert_to_pdf(doc_path, client_name):
                 os.path.dirname(doc_path),
                 doc_path
             ],
-            check=True
+            check=True,
+            timeout=60  # Увеличенный таймаут
         )
         # Переименование файла
         temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
+        if not os.path.exists(temp_pdf):
+            raise FileNotFoundError(f"PDF-файл {temp_pdf} не создан")
+        
         os.rename(temp_pdf, pdf_path)
+        logger.info(f"PDF создан: {pdf_path}")
         return pdf_path
     except subprocess.CalledProcessError as e:
         logger.error(f"Ошибка конвертации в PDF: {e}")
         raise
-    except FileNotFoundError:
-        logger.error("LibreOffice не найден в системе")
+    except FileNotFoundError as e:
+        logger.error(f"Файл не найден: {e}")
+        raise
+    except subprocess.TimeoutExpired:
+        logger.error("Превышено время ожидания для конвертации LibreOffice")
+        raise
+    except Exception as e:
+        logger.error(f"Неизвестная ошибка при конвертации: {e}")
         raise
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -134,31 +165,39 @@ async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current_date = datetime.now(kyiv_tz).strftime("%Y-%m-%d")
     context.user_data["date"] = current_date
     
-    # Обработка документа
-    temp_doc = replace_client_and_date(template_path, client_name, current_date)
-    pdf_path = convert_to_pdf(temp_doc, client_name)
-    
-    # Отправка PDF
-    with open(pdf_path, "rb") as f:
-        await query.message.reply_document(document=f, filename=f"{client_name}.pdf")
-    
-    # Очистка временных файлов
-    os.remove(temp_doc)
-    os.remove(pdf_path)
-    
-    # Предложение добавить в закладки или изменить дату
-    keyboard = [
-        [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
-        [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
-        [InlineKeyboardButton("Начать заново", callback_data="start_over")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.message.reply_text(
-        "Документ сгенерирован! Что хотите сделать дальше?",
-        reply_markup=reply_markup
-    )
-    return CHANGE_DATE
+    try:
+        # Обработка документа
+        temp_doc = replace_client_and_date(template_path, client_name, current_date)
+        pdf_path = convert_to_pdf(temp_doc, client_name)
+        
+        # Отправка PDF
+        with open(pdf_path, "rb") as f:
+            await query.message.reply_document(document=f, filename=f"{client_name}.pdf")
+        
+        # Очистка временных файлов
+        os.remove(temp_doc)
+        os.remove(pdf_path)
+        logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
+        
+        # Предложение добавить в закладки или изменить дату
+        keyboard = [
+            [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
+            [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
+            [InlineKeyboardButton("Начать заново", callback_data="start_over")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.message.reply_text(
+            "Документ сгенерирован! Что хотите сделать дальше?",
+            reply_markup=reply_markup
+        )
+        return CHANGE_DATE
+    except Exception as e:
+        logger.error(f"Ошибка в select_template: {e}")
+        await query.message.reply_text(
+            "Произошла ошибка при создании документа. Попробуйте снова или свяжитесь с поддержкой."
+        )
+        return ConversationHandler.END
 
 async def bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -169,16 +208,20 @@ async def bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
     template_key = context.user_data["template_key"]
     date = context.user_data["date"]
     
-    conn = sqlite3.connect("bookmarks.db")
-    c = conn.cursor()
-    c.execute(
-        "INSERT INTO bookmarks (user_id, client_name, template_name, date) VALUES (?, ?, ?, ?)",
-        (user_id, client_name, template_key, date)
-    )
-    conn.commit()
-    conn.close()
+    try:
+        conn = sqlite3.connect("bookmarks.db")
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO bookmarks (user_id, client_name, template_name, date) VALUES (?, ?, ?, ?)",
+            (user_id, client_name, template_key, date)
+        )
+        conn.commit()
+        conn.close()
+        await query.message.reply_text("Документ успешно добавлен в закладки!")
+    except Exception as e:
+        logger.error(f"Ошибка при добавлении закладки: {e}")
+        await query.message.reply_text("Ошибка при сохранении закладки. Попробуйте снова.")
     
-    await query.message.reply_text("Документ успешно добавлен в закладки!")
     return CHANGE_DATE
 
 async def change_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -201,31 +244,39 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     template_key = context.user_data["template_key"]
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
-    # Обработка документа с новой датой
-    temp_doc = replace_client_and_date(template_path, client_name, new_date)
-    pdf_path = convert_to_pdf(temp_doc, client_name)
-    
-    # Отправка PDF
-    with open(pdf_path, "rb") as f:
-        await update.message.reply_document(document=f, filename=f"{client_name}.pdf")
-    
-    # Очистка временных файлов
-    os.remove(temp_doc)
-    os.remove(pdf_path)
-    
-    # Предложение вариантов
-    keyboard = [
-        [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
-        [InlineKeyboardButton("Изменить дату снова", callback_data="change_date")],
-        [InlineKeyboardButton("Начать заново", callback_data="start_over")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "Документ обновлен с новой датой! Что хотите сделать дальше?",
-        reply_markup=reply_markup
-    )
-    return CHANGE_DATE
+    try:
+        # Обработка документа с новой датой
+        temp_doc = replace_client_and_date(template_path, client_name, new_date)
+        pdf_path = convert_to_pdf(temp_doc, client_name)
+        
+        # Отправка PDF
+        with open(pdf_path, "rb") as f:
+            await update.message.reply_document(document=f, filename=f"{client_name}.pdf")
+        
+        # Очистка временных файлов
+        os.remove(temp_doc)
+        os.remove(pdf_path)
+        logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
+        
+        # Предложение вариантов
+        keyboard = [
+            [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
+            [InlineKeyboardButton("Изменить дату снова", callback_data="change_date")],
+            [InlineKeyboardButton("Начать заново", callback_data="start_over")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "Документ обновлен с новой датой! Что хотите сделать дальше?",
+            reply_markup=reply_markup
+        )
+        return CHANGE_DATE
+    except Exception as e:
+        logger.error(f"Ошибка в receive_new_date: {e}")
+        await update.message.reply_text(
+            "Произошла ошибка при создании документа. Попробуйте снова или свяжитесь с поддержкой."
+        )
+        return ConversationHandler.END
 
 async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -237,35 +288,40 @@ async def start_over(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
-    conn = sqlite3.connect("bookmarks.db")
-    c = conn.cursor()
-    c.execute(
-        "SELECT client_name, template_name, date FROM bookmarks WHERE user_id = ?",
-        (user_id,)
-    )
-    bookmarks = c.fetchall()
-    conn.close()
-    
-    if not bookmarks:
-        await update.message.reply_text("У вас нет сохраненных закладок.")
-        return ConversationHandler.END
-    
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                f"{client_name} ({template_name}, {date})",
-                callback_data=f"bookmark_{client_name}_{template_name}_{date}"
-            )
+    try:
+        conn = sqlite3.connect("bookmarks.db")
+        c = conn.cursor()
+        c.execute(
+            "SELECT client_name, template_name, date FROM bookmarks WHERE user_id = ?",
+            (user_id,)
+        )
+        bookmarks = c.fetchall()
+        conn.close()
+        
+        if not bookmarks:
+            await update.message.reply_text("У вас нет сохраненных закладок.")
+            return ConversationHandler.END
+        
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"{client_name} ({template_name}, {date})",
+                    callback_data=f"bookmark_{client_name}_{template_name}_{date}"
+                )
+            ]
+            for client_name, template_name, date in bookmarks
         ]
-        for client_name, template_name, date in bookmarks
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "Выберите сохраненный документ для повторной генерации:",
-        reply_markup=reply_markup
-    )
-    return VIEW_BOOKMARKS
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "Выберите сохраненный документ для повторной генерации:",
+            reply_markup=reply_markup
+        )
+        return VIEW_BOOKMARKS
+    except Exception as e:
+        logger.error(f"Ошибка при просмотре закладок: {e}")
+        await update.message.reply_text("Ошибка при загрузке закладок. Попробуйте снова.")
+        return ConversationHandler.END
 
 async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -277,30 +333,39 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
     context.user_data["date"] = date
     
     template_path = os.path.join("templates", TEMPLATES[template_key])
-    temp_doc = replace_client_and_date(template_path, client_name, date)
-    pdf_path = convert_to_pdf(temp_doc, client_name)
     
-    # Отправка PDF
-    with open(pdf_path, "rb") as f:
-        await query.message.reply_document(document=f, filename=f"{client_name}.pdf")
-    
-    # Очистка временных файлов
-    os.remove(temp_doc)
-    os.remove(pdf_path)
-    
-    # Предложение вариантов
-    keyboard = [
-        [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
-        [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
-        [InlineKeyboardButton("Начать заново", callback_data="start_over")],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await query.message.reply_text(
-        "Документ повторно сгенерирован! Что хотите сделать дальше?",
-        reply_markup=reply_markup
-    )
-    return CHANGE_DATE
+    try:
+        temp_doc = replace_client_and_date(template_path, client_name, date)
+        pdf_path = convert_to_pdf(temp_doc, client_name)
+        
+        # Отправка PDF
+        with open(pdf_path, "rb") as f:
+            await query.message.reply_document(document=f, filename=f"{client_name}.pdf")
+        
+        # Очистка временных файлов
+        os.remove(temp_doc)
+        os.remove(pdf_path)
+        logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
+        
+        # Предложение вариантов
+        keyboard = [
+            [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
+            [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
+            [InlineKeyboardButton("Начать заново", callback_data="start_over")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.message.reply_text(
+            "Документ повторно сгенерирован! Что хотите сделать дальше?",
+            reply_markup=reply_markup
+        )
+        return CHANGE_DATE
+    except Exception as e:
+        logger.error(f"Ошибка в regenerate_bookmark: {e}")
+        await query.message.reply_text(
+            "Произошла ошибка при создании документа. Попробуйте снова или свяжитесь с поддержкой."
+        )
+        return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Операция отменена.")
@@ -309,45 +374,59 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Update {update} caused error {context.error}")
-    if update and update.message:
-        await update.message.reply_text("Произошла ошибка. Пожалуйста, попробуйте снова.")
+    if update:
+        if update.message:
+            await update.message.reply_text(
+                "Произошла ошибка. Попробуйте снова или свяжитесь с поддержкой."
+            )
+        elif update.callback_query:
+            await update.callback_query.message.reply_text(
+                "Произошла ошибка. Попробуйте снова или свяжитесь с поддержкой."
+            )
 
 def main():
-    application = (
-        Application.builder()
-        .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
-        .build()
-    )
-    
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start), CommandHandler("bookmarks", view_bookmarks)],
-        states={
-            INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
-            SELECT_TEMPLATE: [CallbackQueryHandler(select_template)],
-            CHANGE_DATE: [
-                CallbackQueryHandler(bookmark, pattern="bookmark"),
-                CallbackQueryHandler(change_date, pattern="change_date"),
-                CallbackQueryHandler(start_over, pattern="start_over"),
-            ],
-            INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
-            VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*")],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    
-    application.add_handler(conv_handler)
-    application.add_error_handler(error_handler)
-    
-    # Запуск бота с вебхуком
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 8443)),
-        url_path="/webhook",
-        webhook_url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-    )
-
-if __name__ == "__main__":
-    main()
+    try:
+        application = (
+            Application.builder()
+            .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
+            .build()
+        )
+        
+        conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("start", start), CommandHandler("bookmarks", view_bookmarks)],
+            states={
+                INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
+                SELECT_TEMPLATE: [CallbackQueryHandler(select_template)],
+                CHANGE_DATE: [
+                    CallbackQueryHandler(bookmark, pattern="bookmark"),
+                    CallbackQueryHandler(change_date, pattern="change_date"),
+                    CallbackQueryHandler(start_over, pattern="start_over"),
+                ],
+                INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
+                VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*")],
+            },
+            fallbacks=[CommandHandler("cancel", cancel)],
+        )
+        
+        application.add_handler(conv_handler)
+        application.add_error_handler(error_handler)
+        
+        # Проверка директории templates
+        if not os.path.exists("templates"):
+            logger.error("Директория templates не найдена")
+            raise FileNotFoundError("Директория templates не найдена")
+        
+        # Запуск бота с вебхуком
+        logger.info("Запуск приложения с вебхуком")
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 8443)),
+            url_path="/webhook",
+            webhook_url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при запуске приложения: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
