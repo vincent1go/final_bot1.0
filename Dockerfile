@@ -2,6 +2,7 @@ FROM python:3.12-slim
 
 # Установить LibreOffice и зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice \
     libreoffice-writer \
     libreoffice-java-common \
     default-jre \
