@@ -18,12 +18,29 @@ from telegram.ext import (
 import sqlite3
 import logging
 from dateutil.parser import parse
+from flask import Flask
+from threading import Thread
 
 # Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# Flask-приложение для Uptime Robot
+app = Flask('')
+
+@app.route('/ping')
+def ping():
+    logger.info("Получен запрос на /ping от Uptime Robot")
+    return "Bot is alive!"
+
+def run_flask():
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.start()
 
 # Состояния бота
 MAIN_MENU, SELECT_TEMPLATE, INPUT_NAME, CHANGE_DATE, INPUT_NEW_DATE, GENERATE_ANOTHER, VIEW_BOOKMARKS = range(7)
@@ -506,6 +523,9 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     try:
+        # Запускаем Flask для Uptime Robot
+        keep_alive()
+        
         application = (
             Application.builder()
             .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
