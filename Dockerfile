@@ -1,24 +1,21 @@
 FROM python:3.11-slim
 
-# Установка LibreOffice и зависимостей для шрифтов и рендеринга
+# Установка системных зависимостей
 RUN apt-get update && apt-get install -y \
     libreoffice \
-    fontconfig \
-    libxrender1 \
-    && apt-get clean \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Установка рабочей директории
+# Настройка рабочей директории
 WORKDIR /app
+COPY . .
 
-# Копирование файлов проекта
-COPY requirements.txt .
-COPY main.py .
-COPY templates/ templates/
+# Установка Python зависимостей
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Обновление pip и установка Python-зависимостей без кэша
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# Команда для запуска бота
+# Использование tini как init-процесса
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["python", "main.py"]
+
+# Экспорт порта
+EXPOSE 10000
