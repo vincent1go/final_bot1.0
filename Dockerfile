@@ -4,6 +4,9 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y \
     libreoffice \
     tini \
+    libxml2 \
+    libxslt1.1 \
+    libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
 # Настройка рабочей директории
