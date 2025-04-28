@@ -289,7 +289,184 @@ async def bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Ошибка при добавлении закладки: {e}")
         await query.message.reply_text("Ошибка при сохранении закладки. Попробуйте снова.")
     
+    return AFTER_GENERATION
 
+# Изменение даты
+async def change_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    await query.message.reply_text("Введите новую дату (например, 2025-04-28, 28.04.2025, 28/04/2025 и т.д.):")
+    return INPUT_NEW_DATE
+
+async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    new_date_input = update.message.text.strip()
+    try:
+        parsed_date = parse(new_date_input)
+        new_date = parsed_date.strftime("%Y-%m-%d")
+    except ValueError:
+        await update.message.reply_text("Неверный формат даты. Используйте, например, 2025-04-28 или 28.04.2025:")
+        return INPUT_NEW_DATE
+    
+    context.user_data["date"] = new_date
+    client_name = context.user_data["client_name"]
+    template_key = context.user_data["template_key"]
+    
+    return await generate_document(update, context, client_name, template_key, new_date)
+
+# Просмотр сохранённых документов
+async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id if update.message else update.callback_query.from_user.id
+    try:
+        conn = sqlite3.connect("bookmarks.db")
+        c = conn.cursor()
+        c.execute(
+            "SELECT client_name, template_name, date FROM bookmarks WHERE user_id = ?",
+            (user_id,)
+        )
+        bookmarks = c.fetchall()
+        conn.close()
+        
+        if not bookmarks:
+            if update.message:
+                await update.message.reply_text("У вас нет сохранённых закладок.")
+            else:
+                await update.callback_query.message.reply_text("У вас нет сохранённых закладок.")
+            return await main_menu(update, context)
+        
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    f"{client_name} ({template_name}, {date})",
+                    callback_data=f"bookmark_{client_name}_{template_name}_{date}"
+                )
+            ]
+            for client_name, template_name, date in bookmarks
+        ]
+        keyboard.append([InlineKeyboardButton("Меню", callback_data="main_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        if update.message:
+            await update.message.reply_text(
+                "Выберите сохранённый документ для повторной генерации:",
+                reply_markup=reply_markup
+            )
+        else:
+            await update.callback_query.message.reply_text(
+                "Выберите сохранённый документ для повторной генерации:",
+                reply_markup=reply_markup
+            )
+        return VIEW_BOOKMARKS
+    except Exception as e:
+        logger.error(f"Ошибка при просмотре закладок: {e}")
+        if update.message:
+            await update.message.reply_text("Ошибка при загрузке закладок. Попробуйте снова.")
+        else:
+            await update.callback_query.message.reply_text("Ошибка при загрузке закладок. Попробуйте снова.")
+        return await main_menu(update, context)
+
+# Повторная генерация из закладок
+async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    _, client_name, template_key, date = query.data.split("_", 3)
+    context.user_data["client_name"] = client_name
+    context.user_data["template_key"] = template_key
+    context.user_data["date"] = date
+    
+    return await generate_document(update, context, client_name, template_key, date)
+
+# Обработчик команды /ping
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Bot is alive!")
+    return ConversationHandler.END
+
+# Обработчик команды /help
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "Как использовать бота:\n"
+        "1. Нажмите /start, чтобы начать.\n"
+        "2. Выберите 'Шаблон' и укажите тип документа.\n"
+        "3. Введите имя клиента.\n"
+        "4. После генерации выберите действие: сохранить, изменить дату или создать новый документ.\n"
+        "5. Используйте 'Сохранённые', чтобы повторить генерацию старых документов.\n"
+        "Если что-то не работает, пишите в поддержку!"
+    )
+    await update.message.reply_text(help_text)
+    return await main_menu(update, context)
+
+# Обработчик отмены
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Операция отменена.")
+    context.user_data.clear()
+    return await main_menu(update, context)
+
+# Обработчик ошибок
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Update {update} вызвал ошибку: {context.error}\nПолный traceback: {traceback.format_exc()}")
+    if update:
+        if update.message:
+            await update.message.reply_text("Произошла ошибка. Попробуйте снова или свяжитесь с поддержкой.")
+        elif update.callback_query:
+            await update.callback_query.message.reply_text("Произошла ошибка. Попробуйте снова или свяжитесь с поддержкой.")
+
+def main():
+    try:
+        application = (
+            Application.builder()
+            .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
+            .build()
+        )
+        
+        conv_handler = ConversationHandler(
+            entry_points=[
+                CommandHandler("start", start),
+                CommandHandler("ping", ping),
+                CommandHandler("help", help_command),
+            ],
+            states={
+                MAIN_MENU: [
+                    CallbackQueryHandler(select_template, pattern="select_template"),
+                    CallbackQueryHandler(view_bookmarks, pattern="view_bookmarks"),
+                    CallbackQueryHandler(main_menu, pattern="main_menu"),
+                ],
+                SELECT_TEMPLATE: [CallbackQueryHandler(handle_template_selection)],
+                INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
+                AFTER_GENERATION: [
+                    CallbackQueryHandler(bookmark, pattern="bookmark"),
+                    CallbackQueryHandler(change_date, pattern="change_date"),
+                    CallbackQueryHandler(select_template, pattern="select_template"),
+                    CallbackQueryHandler(main_menu, pattern="main_menu"),
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name),
+                ],
+                CHANGE_DATE: [CallbackQueryHandler(change_date, pattern="change_date")],
+                INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
+                VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*")],
+            },
+            fallbacks=[CommandHandler("cancel", cancel)],
+        )
+        
+        application.add_handler(conv_handler)
+        application.add_error_handler(error_handler)
+        
+        if not os.path.exists("templates"):
+            logger.error("Директория templates не найдена")
+            raise FileNotFoundError("Директория templates не найдена")
+        
+        logger.info("Запуск приложения с вебхуком")
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 8443)),
+            url_path="/webhook",
+            webhook_url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при запуске приложения: {e}\nПолный traceback: {traceback.format_exc()}")
+        raise
+
+if __name__ == "__main__":
+    main()
 if __name__ == "__main__":
     main()
     
