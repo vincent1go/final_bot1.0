@@ -19,6 +19,8 @@ import sqlite3
 import logging
 from dateutil.parser import parse
 from aiohttp import web
+import asyncio
+import traceback
 
 # Настройка логирования
 logging.basicConfig(
@@ -95,9 +97,7 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         doc.save(temp_path)
         logger.info(f"Создан временный файл: {temp_path}")
         return temp_path
-    except Exception as e:
-        logger.error(f"Ошибка при обработке документа {doc_path}: {e}")
-        raise
+    except  raise
 
 def convert_to_pdf(doc_path, client_name):
     pdf_path = f"{client_name}.pdf"
@@ -146,6 +146,18 @@ def convert_to_pdf(doc_path, client_name):
 async def ping(request):
     logger.info("Получен запрос на /ping от Uptime Robot")
     return web.Response(text="Bot is alive!")
+
+# Запуск aiohttp-сервера для /ping
+async def run_aiohttp_server():
+    app = web.Application()
+    app.router.add_get("/ping", ping)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8443))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logger.info(f"aiohttp-сервер запущен на порту {port} для обработки /ping")
+    return runner
 
 # Главное меню
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -510,71 +522,73 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Произошла ошибка. Попробуйте снова или свяжитесь с поддержкой."
             )
 
-def main():
-    try:
-        application = (
-            Application.builder()
-            .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
-            .build()
-        )
-        
-        conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("start", start),
-                CommandHandler("bookmarks", view_bookmarks),
+async def run_telegram_bot():
+    application = (
+        Application.builder()
+        .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
+        .build()
+    )
+    
+    conv_handler = ConversationHandler(
+        entry_points=[
+            CommandHandler("start", start),
+            CommandHandler("bookmarks", view_bookmarks),
+        ],
+        states={
+            MAIN_MENU: [
+                CallbackQueryHandler(select_template, pattern="select_template"),
+                CallbackQueryHandler(view_bookmarks, pattern="view_bookmarks"),
+                CallbackQueryHandler(main_menu, pattern="main_menu"),
             ],
-            states={
-                MAIN_MENU: [
-                    CallbackQueryHandler(select_template, pattern="select_template"),
-                    CallbackQueryHandler(view_bookmarks, pattern="view_bookmarks"),
-                    CallbackQueryHandler(main_menu, pattern="main_menu"),
-                ],
-                SELECT_TEMPLATE: [CallbackQueryHandler(handle_template_selection)],
-                INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
-                CHANGE_DATE: [
-                    CallbackQueryHandler(bookmark, pattern="bookmark"),
-                    CallbackQueryHandler(change_date, pattern="change_date"),
-                    CallbackQueryHandler(generate_another, pattern="generate_another"),
-                    CallbackQueryHandler(select_template, pattern="select_template"),
-                    CallbackQueryHandler(main_menu, pattern="main_menu"),
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name),
-                ],
-                INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
-                GENERATE_ANOTHER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name)],
-                VIEW_BOOKMARKS: [
-                    CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*"),
-                    CallbackQueryHandler(main_menu, pattern="main_menu"),
-                ],
-            },
-            fallbacks=[CommandHandler("cancel", cancel)],
-        )
+            SELECT_TEMPLATE: [CallbackQueryHandler(handle_template_selection)],
+            INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
+            CHANGE_DATE: [
+                CallbackQueryHandler(bookmark, pattern="bookmark"),
+                CallbackQueryHandler(change_date, pattern="change_date"),
+                CallbackQueryHandler(generate_another, pattern="generate_another"),
+                CallbackQueryHandler(select_template, pattern="select_template"),
+                CallbackQueryHandler(main_menu, pattern="main_menu"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name),
+            ],
+            INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
+            GENERATE_ANOTHER: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name)],
+            VIEW_BOOKMARKS: [
+                CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*"),
+                CallbackQueryHandler(main_menu, pattern="main_menu"),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=True  # Добавляем per_message=True, чтобы убрать предупреждение PTBUserWarning
+    )
+    
+    application.add_handler(conv_handler)
+    application.add_error_handler(error_handler)
+    
+    # Проверка директории templates
+    if not os.path.exists("templates"):
+        logger.error("Директория templates не найдена")
+        raise FileNotFoundError("Директория templates не найдена")
+    
+    logger.info("Запуск Telegram-бота в режиме polling")
+    await application.run_polling()
+
+async def main():
+    try:
+        # Запускаем aiohttp-сервер для /ping
+        aiohttp_runner = await run_aiohttp_server()
         
-        application.add_handler(conv_handler)
-        application.add_error_handler(error_handler)
+        # Запускаем Telegram-бот
+        await run_telegram_bot()
         
-        # Проверка директории templates
-        if not os.path.exists("templates"):
-            logger.error("Директория templates не найдена")
-            raise FileNotFoundError("Директория templates не найдена")
+        # Держим сервер aiohttp запущенным
+        while True:
+            await asyncio.sleep(3600)  # Спим 1 час, чтобы цикл не завершился
         
-        # Запуск бота с вебхуком и добавление маршрута /ping
-        port = int(os.environ.get("PORT", 8443))
-        webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
-        logger.info(f"Запуск приложения с вебхуком на порту {port}, webhook: {webhook_url}")
-        
-        # Добавляем маршрут /ping в сервер aiohttp
-        app = application.bot.webhook_app
-        app.router.add_get("/ping", ping)
-        
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="/webhook",
-            webhook_url=webhook_url
-        )
+        # Очистка (не достигнем этого, но на всякий случай)
+        await aiohttp_runner.cleanup()
     except Exception as e:
         logger.error(f"Ошибка при запуске приложения: {e}\nПолный traceback: {traceback.format_exc()}")
         raise
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
