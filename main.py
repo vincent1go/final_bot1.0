@@ -1,11 +1,10 @@
 import os
 import uuid
 import traceback
+import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import docx
-from docx2pdf import convert
-import telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -99,11 +98,30 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
 def convert_to_pdf(doc_path, client_name):
     pdf_path = f"{client_name}.pdf"
     try:
-        convert(doc_path, pdf_path)
-        if not os.path.exists(pdf_path):
-            raise FileNotFoundError(f"PDF-файл {pdf_path} не создан")
-        logger.info(f"PDF создан: {pdf_path}")
+        # Используем LibreOffice для конвертации
+        cmd = [
+            "soffice",
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            os.path.dirname(pdf_path),
+            doc_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        logger.info(f"PDF создан: {pdf_path}\nLibreOffice output: {result.stdout}")
+        
+        # Проверяем, создан ли PDF
+        generated_pdf = os.path.join(os.path.dirname(pdf_path), os.path.basename(doc_path).replace(".docx", ".pdf"))
+        if not os.path.exists(generated_pdf):
+            raise FileNotFoundError(f"PDF-файл {generated_pdf} не создан")
+        
+        # Переименовываем файл в нужное имя
+        os.rename(generated_pdf, pdf_path)
         return pdf_path
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Ошибка LibreOffice: {e}\nStderr: {e.stderr}")
+        raise
     except Exception as e:
         logger.error(f"Ошибка конвертации в PDF: {e}")
         raise
