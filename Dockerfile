@@ -1,14 +1,23 @@
-# Используем официальный Python-образ
 FROM python:3.11-slim
 
-# Устанавливаем рабочую директорию
+# Установка LibreOffice и зависимостей для шрифтов и рендеринга
+RUN apt-get update && apt-get install -y \
+    libreoffice \
+    fontconfig \
+    libxrender1 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Установка рабочей директории
 WORKDIR /app
 
-# Копируем файлы проекта в контейнер
-COPY . .
+# Копирование файлов проекта
+COPY requirements.txt .
+COPY main.py .
+COPY templates/ templates/
 
-# Устанавливаем зависимости
+# Установка Python-зависимостей
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Указываем команду запуска
+# Команда для запуска бота
 CMD ["python", "main.py"]
