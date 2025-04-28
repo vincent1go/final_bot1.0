@@ -11,10 +11,13 @@ RUN apt-get update && apt-get install -y \
 
 # Настройка рабочей директории
 WORKDIR /app
-COPY . .
 
-# Установка Python зависимостей
+# Копирование зависимостей сначала для кэширования
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Копирование остальных файлов
+COPY . .
 
 # Использование tini как init-процесса
 ENTRYPOINT ["/usr/bin/tini", "--"]
