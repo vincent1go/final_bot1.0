@@ -114,11 +114,11 @@ def convert_to_pdf(doc_path, client_name):
                 "--convert-to",
                 "pdf",
                 "--outdir",
-                os.path.dirname(doc_path),
+                os.path.dirname(doc_path) or ".",  # Убедимся, что outdir не пустой
                 doc_path
             ],
             check=True,
-            timeout=30  # Уменьшенный таймаут для ускорения
+            timeout=60  # Увеличенный таймаут
         )
         # Переименование файла
         temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
@@ -178,6 +178,9 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["date"] = current_date
     
     try:
+        # Сообщение о начале генерации
+        await update.message.reply_text("Ожидайте, ваш документ генерируется...")
+        
         # Обработка документа
         temp_doc = replace_client_and_date(template_path, client_name, current_date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
@@ -260,6 +263,9 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
     try:
+        # Сообщение о начале генерации
+        await update.message.reply_text("Ожидайте, ваш документ генерируется...")
+        
         # Обработка документа с новой датой
         temp_doc = replace_client_and_date(template_path, client_name, new_date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
@@ -310,6 +316,9 @@ async def receive_another_name(update: Update, context: ContextTypes.DEFAULT_TYP
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
     try:
+        # Сообщение о начале генерации
+        await update.message.reply_text("Ожидайте, ваш документ генерируется...")
+        
         # Обработка документа
         temp_doc = replace_client_and_date(template_path, client_name, date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
@@ -411,6 +420,10 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
     try:
+        # Сообщение о начале генерации
+        await query.message.reply_text("Ожидайте, ваш документ генерируется...")
+        
+        # Обработка документа
         temp_doc = replace_client_and_date(template_path, client_name, date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
