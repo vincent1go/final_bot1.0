@@ -9,6 +9,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import random
+from docx.shared import Inches
+from docx.enum.text import WD_PARAGRAPH_ALIGNMENT
 
 import docx
 import telegram
@@ -51,148 +53,55 @@ application = Application.builder().token(BOT_TOKEN).build()
     INPUT_NAME,
     CHANGE_DATE,
     INPUT_NEW_DATE,
-    GENERATE_ANOTHER,
     VIEW_BOOKMARKS,
     VIEW_VACANCIES,
     VIEW_VACANCY_DETAILS
-) = range(9)
+) = range(8)
 
 # Инициализация базы данных
 def init_db():
     with sqlite3.connect("bookmarks.db") as conn:
         c = conn.cursor()
         c.execute("""CREATE TABLE IF NOT EXISTS bookmarks
-                    (user_id INTEGER, 
-                     client_name TEXT, 
-                     template_name TEXT, 
-                     date TEXT)""")
+                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                     user_id INTEGER NOT NULL,
+                     client_name TEXT NOT NULL,
+                     template_name TEXT NOT NULL,
+                     date TEXT NOT NULL,
+                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
         conn.commit()
 
 init_db()
 
 # Шаблоны документов
 TEMPLATES = {
-    "ur_recruitment": "template_ur.docx",
-    "small_world": "template_small_world.docx",
-    "imperative": "template_imperative.docx",
+    "ur_recruitment": {
+        "file": "template_ur.docx",
+        "date_format": "Date:"
+    },
+    "small_world": {
+        "file": "template_small_world.docx",
+        "date_format": "Date:",
+        "signature": True
+    },
+    "imperative": {
+        "file": "template_imperative.docx",
+        "date_format": "DATE:"
+    }
 }
 
-# База данных вакансий
+# База данных вакансий (30 примеров)
 VACANCIES = [
     {
-        "id": "vac_1",
-        "title": "Сотрудники на завод Coca-Cola",
-        "location": "Лондон",
-        "salary": "3700-4100£",
-        "description": """🔹 *Требуются СОТРУДНИКИ НА ЗАВОД* 🔹
-        
-🏢 *Компания:* Coca-Cola Europacific Partners
-🌍 *Локация:* Великобритания, Лондон
-💰 *Зарплата:* 3700-4100£/месяц
-
-📌 *Требования:*
-• Мужчины и женщины 18–55 лет
-• Ответственность, аккуратность
-• Базовый английский — желательно
-• Опыт на производстве — плюс
-
-📋 *Обязанности:*
-• Работа на линии розлива и упаковки
-• Контроль качества продукции
-• Упаковка паллет, маркировка
-• Поддержание чистоты рабочего места
-
-⏱ *График работы:*
-• Смены по 8–12 часов
-• 5–6 дней в неделю
-
-🏠 *Проживание:*
-• Предоставляется работодателем
-• 2–3 человека в комнате"""
-    },
-    {
-        "id": "vac_2",
-        "title": "Работники склада Amazon",
-        "location": "Манчестер",
-        "salary": "3800-4200£",
-        "description": """🔹 *Требуются РАБОТНИКИ СКЛАДА* 🔹
-        
-🏢 *Компания:* Amazon
-🌍 *Локация:* Великобритания, Манчестер
-💰 *Зарплата:* 3800-4200£/месяц
-
-📌 *Требования:*
-• Возраст 18–50 лет
-• Физическая выносливость
-• Базовый английский приветствуется
-
-📋 *Обязанности:*
-• Комплектация и упаковка заказов
-• Работа с системой сканирования
-• Погрузочно-разгрузочные работы
-
-⏱ *График работы:*
-• Смены по 9–11 часов
-• 5 дней в неделю
-
-🏠 *Проживание:*
-• Компенсация 50% стоимости жилья"""
-    },
-    # Добавьте остальные вакансии по аналогии
-    {
-        "id": "vac_3",
-        "title": "Операторы станков",
-        "location": "Бирмингем",
-        "salary": "3900-4300£",
-        "description": """🔹 *Требуются ОПЕРАТОРЫ СТАНКОВ* 🔹
-        
-🏢 *Компания:* MetalWorks Ltd
-🌍 *Локация:* Великобритания, Бирмингем
-💰 *Зарплата:* 3900-4300£/месяц
-
-📌 *Требования:*
-• Мужчины 20–45 лет
-• Опыт работы на станках приветствуется
-• Обучение на месте
-
-📋 *Обязанности:*
-• Работа на станках ЧПУ
-• Контроль качества продукции
-• Поддержание порядка на рабочем месте
-
-⏱ *График работы:*
-• Смены по 8–10 часов
-• 5–6 дней в неделю
-
-🏠 *Проживание:*
-• Предоставляется общежитие"""
-    }
-]
-
-# Генерация дополнительных вакансий
-for i in range(4, 31):
-    cities = ["Лондон", "Манчестер", "Бирмингем", "Ливерпуль", "Глазго", "Шеффилд"]
-    positions = ["фасовщики", "грузчики", "упаковщики", "операторы", "комплектовщики", "кладовщики"]
-    companies = ["Tesco", "Sainsbury's", "Asda", "Morrisons", "IKEA", "DHL"]
-    
-    city = random.choice(cities)
-    position = random.choice(positions)
-    company = random.choice(companies)
-    salary_min = random.randint(3700, 3900)
-    salary_max = salary_min + random.randint(200, 400)
-    hours = random.choice(["8-10", "9-11", "10-12"])
-    days = random.choice(["5", "5-6"])
-    
-    VACANCIES.append({
         "id": f"vac_{i}",
-        "title": f"{position.capitalize()} для {company}",
-        "location": city,
-        "salary": f"{salary_min}-{salary_max}£",
-        "description": f"""🔹 *Требуются {position.upper()}* 🔹
-        
-🏢 *Компания:* {company}
-🌍 *Локация:* Великобритания, {city}
-💰 *Зарплата:* {salary_min}-{salary_max}£/месяц
+        "title": f"{random.choice(['Работник', 'Оператор', 'Специалист'])} {random.choice(['склада', 'производства', 'цеха'])}",
+        "location": random.choice(["Лондон", "Манчестер", "Бирмингем"]),
+        "salary": f"{random.randint(3700, 3900)}-{random.randint(4000, 4500)}£",
+        "description": f"""🔹 *{random.choice(['Требуются', 'Нужны'])} {random.choice(['работники', 'сотрудники', 'специалисты'])}* 🔹
+
+🏢 *Компания:* {random.choice(['Amazon', 'Tesco', 'Coca-Cola', 'DHL'])}
+🌍 *Локация:* Великобритания, {random.choice(['Лондон', 'Манчестер', 'Бирмингем'])}
+💰 *Зарплата:* {random.randint(3700, 3900)}-{random.randint(4000, 4500)}£/месяц
 
 📌 *Требования:*
 • Возраст 18–50 лет
@@ -200,20 +109,20 @@ for i in range(4, 31):
 • Базовый английский приветствуется
 
 📋 *Обязанности:*
-• Работа на производстве/складе
+• {random.choice(['Работа на производстве', 'Работа со складскими системами'])}
 • Соблюдение техники безопасности
 • Выполнение рабочих задач
 
 ⏱ *График работы:*
-• Смены по {hours} часов
-• {days} дней в неделю
+• Смены по {random.choice(['8-10', '9-11', '10-12'])} часов
+• {random.choice(['5', '5-6'])} дней в неделю
 
 🏠 *Проживание:*
-• {random.choice(['Предоставляется работодателем', 'Компенсация 50%', 'Помощь в поиске жилья'])}"""
-    })
+• {random.choice(['Предоставляется', 'Компенсация 50%', 'Помощь в поиске'])}"""
+    } for i in range(1, 31)
+]
 
 def get_main_keyboard():
-    """Клавиатура главного меню"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📄 Создать документ", callback_data="select_template")],
         [InlineKeyboardButton("📁 Мои сохранённые", callback_data="view_bookmarks")],
@@ -221,78 +130,60 @@ def get_main_keyboard():
     ])
 
 def get_action_keyboard():
-    """Клавиатура после генерации документа"""
     return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("⭐ В закладки", callback_data="bookmark"),
-            InlineKeyboardButton("📅 Изменить дату", callback_data="change_date")
-        ],
-        [
-            InlineKeyboardButton("📋 К шаблонам", callback_data="select_template"),
-            InlineKeyboardButton("🏠 Меню", callback_data="main_menu")
-        ]
+        [InlineKeyboardButton("⭐ В закладки", callback_data="bookmark")],
+        [InlineKeyboardButton("📅 Изменить дату", callback_data="change_date")],
+        [InlineKeyboardButton("🔄 Создать ещё", callback_data="select_template")],
+        [InlineKeyboardButton("🏠 В меню", callback_data="main_menu")]
     ])
 
 async def cleanup_files(*files):
-    """Удаление временных файлов"""
     for file in files:
-        if os.path.exists(file):
-            try:
+        try:
+            if file and os.path.exists(file):
                 os.remove(file)
                 logger.info(f"Удален файл: {file}")
-            except Exception as e:
-                logger.error(f"Ошибка удаления {file}: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка удаления файла {file}: {e}")
 
-def replace_client_and_date(doc_path, client_name, date_str, template_key):
-    """Замена данных в шаблоне DOCX с сохранением подписи и печати"""
-    try:
-        if not os.path.exists(doc_path):
-            raise FileNotFoundError(f"Шаблон {doc_path} не найден")
-        
-        doc = docx.Document(doc_path)
-        
-        # Замена имени клиента
-        client_replaced = False
-        for para in doc.paragraphs:
-            if "Client:" in para.text:
-                if template_key == "small_world":
-                    # Для Small World сохраняем оригинальный формат
-                    para.text = para.text.replace("Client:", f"Client: {client_name}")
-                else:
-                    para.text = para.text.replace("Client:", f"Client: {client_name}")
-                client_replaced = True
-                break
-        
-        # Замена даты с сохранением подписи и печати
-        date_replaced_count = 0
-        for para in doc.paragraphs[-6:]:  # Ищем в последних 6 параграфах
-            if ("Date:" in para.text or "DATE:" in para.text) and date_replaced_count < 2:
-                if template_key == "small_world":
-                    # Для Small World сохраняем подпись и печать
-                    if "Date:" in para.text:
-                        para.text = para.text.replace("Date:", f"Date: {date_str}")
-                        # Добавляем отступ для подписи и печати
-                        next_para = doc.paragraphs[doc.paragraphs.index(para)+1]
-                        next_para.text = "\t\t\t\t\t\t\t___________________\n\t\t\t\t\t\t\tSignature & Stamp"
-                elif template_key == "imperative":
-                    # Для Imperative заменяем DATE:
-                    para.text = para.text.replace("DATE:", f"DATE: {date_str}")
-                else:
-                    # Для остальных шаблонов стандартная замена
-                    para.text = para.text.replace("Date:", f"Date: {date_str}")
-                date_replaced_count += 1
-        
-        # Сохранение временного файла
-        temp_path = f"temp_{uuid.uuid4()}.docx"
-        doc.save(temp_path)
-        return temp_path
+def process_template(doc_path, client_name, date_str, template_key):
+    doc = docx.Document(doc_path)
+    template_config = TEMPLATES[template_key]
     
-    except Exception as e:
-        logger.error(f"Ошибка обработки документа: {e}")
-        raise
+    # Замена клиента
+    for para in doc.paragraphs:
+        if "Client:" in para.text:
+            para.text = para.text.replace("Client:", f"Client: {client_name}")
+            break
+    
+    # Замена даты
+    date_replaced = False
+    for para in doc.paragraphs[-6:]:
+        if template_config["date_format"] in para.text:
+            para.text = para.text.replace(
+                template_config["date_format"], 
+                f"{template_config['date_format']} {date_str}"
+            )
+            
+            # Добавление подписи
+            if template_config.get("signature"):
+                if os.path.exists("signature.png"):
+                    para.add_run().add_picture("signature.png", width=Inches(1.5))
+                    para.alignment = WD_PARAGRAPH_ALIGNMENT.RIGHT
+                else:
+                    para.add_run("\t[Подпись и печать]")
+            
+            date_replaced = True
+            break
+    
+    if not date_replaced:
+        raise ValueError("Поле для даты не найдено в шаблоне")
+    
+    temp_path = f"temp_{uuid.uuid4()}.docx"
+    doc.save(temp_path)
+    return temp_path
 
-def convert_to_pdf(doc_path, client_name):
-    """Конвертация DOCX в PDF"""
+def convert_to_pdf(doc_path, output_name):
     try:
         subprocess.run(
             [
@@ -310,33 +201,39 @@ def convert_to_pdf(doc_path, client_name):
         )
         
         temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
-        pdf_path = f"{client_name}.pdf"
+        pdf_path = f"{output_name}.pdf"
         
         if os.path.exists(temp_pdf):
             os.rename(temp_pdf, pdf_path)
             return pdf_path
         raise FileNotFoundError("PDF не создан")
-    
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         logger.error(f"Ошибка конвертации: {e}")
         raise
 
-async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Главное меню"""
-    text = "🏠 *Главное меню*\nВыберите действие:"
-    if update.message:
-        await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
-    else:
-        await update.callback_query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🤖 Добро пожаловать в бота для генерации документов!",
+        reply_markup=get_main_keyboard()
+    )
     return MAIN_MENU
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
-    await update.message.reply_text("🤖 Добро пожаловать в бота для генерации документов!")
-    return await main_menu(update, context)
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if query:
+        await query.answer()
+        await query.edit_message_text(
+            "🏠 Главное меню:",
+            reply_markup=get_main_keyboard()
+        )
+    else:
+        await update.message.reply_text(
+            "🏠 Главное меню:",
+            reply_markup=get_main_keyboard()
+        )
+    return MAIN_MENU
 
 async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор шаблона"""
     query = update.callback_query
     await query.answer()
     
@@ -344,7 +241,9 @@ async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📝 UR Recruitment", callback_data="ur_recruitment")],
         [InlineKeyboardButton("🌍 Small World", callback_data="small_world")],
         [InlineKeyboardButton("⚡ Imperative", callback_data="imperative")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="main_menu")]
     ]
+    
     await query.edit_message_text(
         "📂 Выберите шаблон документа:",
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -352,93 +251,85 @@ async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SELECT_TEMPLATE
 
 async def handle_template_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора шаблона"""
     query = update.callback_query
     await query.answer()
     
-    context.user_data["template_key"] = query.data
+    template_key = query.data
+    if template_key not in TEMPLATES:
+        await query.edit_message_text("❌ Шаблон не найден!")
+        return await main_menu(update, context)
+    
+    context.user_data["template_key"] = template_key
     await query.edit_message_text("✏️ Введите имя клиента:")
     return INPUT_NAME
 
-async def generate_document(update, context, new_date=None):
-    """Основная логика генерации документа"""
+async def generate_document(update: Update, context: ContextTypes.DEFAULT_TYPE, new_date=None):
     client_name = update.message.text.strip()
     template_key = context.user_data["template_key"]
-    template_path = os.path.join("templates", TEMPLATES[template_key])
+    template_path = os.path.join("templates", TEMPLATES[template_key]["file"])
     
-    # Установка даты
     kyiv_tz = ZoneInfo("Europe/Kiev")
     date_str = new_date or datetime.now(kyiv_tz).strftime("%Y-%m-%d")
-    context.user_data.update({
-        "client_name": client_name,
-        "date": date_str
-    })
     
     try:
         await update.message.reply_text("⏳ Идет генерация документа...")
         
-        # Генерация и конвертация
-        temp_doc = replace_client_and_date(template_path, client_name, date_str, template_key)
+        temp_doc = process_template(template_path, client_name, date_str, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
-        # Отправка файла
         with open(pdf_path, "rb") as f:
-            await update.message.reply_document(document=f, filename=f"{client_name}.pdf")
+            await update.message.reply_document(
+                document=f,
+                caption=f"✅ Документ для {client_name} готов!",
+                filename=f"{client_name}.pdf"
+            )
         
-        # Очистка
         await cleanup_files(temp_doc, pdf_path)
         
-        # Ответ с клавиатурой
+        context.user_data.update({
+            "client_name": client_name,
+            "date": date_str
+        })
+        
         await update.message.reply_text(
-            "✅ Документ готов! Выберите действие:",
+            "Выберите действие:",
             reply_markup=get_action_keyboard()
         )
         return CHANGE_DATE
-    
+        
     except Exception as e:
         logger.error(f"Ошибка генерации: {e}")
-        await update.message.reply_text("❌ Ошибка генерации! Попробуйте снова.")
-        return ConversationHandler.END
+        await update.message.reply_text("❌ Ошибка при создании документа!")
+        return await main_menu(update, context)
 
 async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка имени клиента"""
     return await generate_document(update, context)
 
 async def bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавление в закладки"""
     query = update.callback_query
     await query.answer()
     
-    user_data = {
-        "user_id": query.from_user.id,
-        "client_name": context.user_data["client_name"],
-        "template_key": context.user_data["template_key"],
-        "date": context.user_data["date"]
-    }
-    
+    user_data = context.user_data
     try:
         with sqlite3.connect("bookmarks.db") as conn:
             conn.execute(
-                "INSERT INTO bookmarks VALUES (?, ?, ?, ?)",
-                (user_data["user_id"], user_data["client_name"], 
-                 user_data["template_key"], user_data["date"])
+                "INSERT INTO bookmarks (user_id, client_name, template_name, date) VALUES (?, ?, ?, ?)",
+                (query.from_user.id, user_data["client_name"], user_data["template_key"], user_data["date"])
             )
         await query.edit_message_text("✅ Документ добавлен в закладки!")
     except Exception as e:
         logger.error(f"Ошибка сохранения: {e}")
-        await query.edit_message_text("❌ Ошибка сохранения!")
+        await query.edit_message_text("❌ Ошибка при сохранении!")
     
     return CHANGE_DATE
 
 async def change_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запрос новой даты"""
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text("📆 Введите дату в формате ГГГГ-ММ-ДД:")
+    await query.edit_message_text("📆 Введите новую дату в формате ГГГГ-ММ-ДД:")
     return INPUT_NEW_DATE
 
 async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка новой даты"""
     try:
         parsed_date = parse(update.message.text.strip())
         new_date = parsed_date.strftime("%Y-%m-%d")
@@ -448,33 +339,172 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INPUT_NEW_DATE
 
 async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Просмотр закладок"""
+    user_id = update.effective_user.id
     try:
-        user_id = update.effective_user.id
-        
         with sqlite3.connect("bookmarks.db") as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT client_name, template_name, date FROM bookmarks WHERE user_id = ?",
+                "SELECT client_name, template_name, date FROM bookmarks WHERE user_id = ? ORDER BY created_at DESC",
                 (user_id,)
             )
             bookmarks = cursor.fetchall()
         
         if not bookmarks:
-            if update.callback_query:
-                await update.callback_query.answer()
-                await update.callback_query.edit_message_text("📭 У вас нет сохранённых документов.")
-            else:
-                await update.message.reply_text("📭 У вас нет сохранённых документов.")
+            await update.message.reply_text("📭 У вас нет сохранённых документов.")
             return await main_menu(update, context)
         
         keyboard = [
             [InlineKeyboardButton(
                 f"📌 {client} ({template}, {date})",
-                callback_data=f"bookmark_{client}_{template}_{date}"
-            )] for client, template, date in bookmarks
+                callback_data=f"load_bookmark_{i}"
+            )] for i, (client, template, date) in enumerate(bookmarks)
         ]
-        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+        keyboard.append([InlineKeyboardButton("🏠 В меню", callback_data="main_menu")])
         
-        if update.callback_query:
-            await update.callback_query.answer
+        await update.message.reply_text(
+            "📚 Ваши сохранённые документы:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        return VIEW_BOOKMARKS
+    
+    except Exception as e:
+        logger.error(f"Ошибка загрузки закладок: {e}")
+        await update.message.reply_text("❌ Ошибка при загрузке закладок!")
+        return await main_menu(update, context)
+
+async def view_vacancies(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton(
+            f"{vac['title']} | {vac['location']} | {vac['salary']}",
+            callback_data=f"vacancy_{vac['id']}"
+        )] for vac in VACANCIES[:10]  # Первые 10 вакансий
+    ]
+    keyboard.append([InlineKeyboardButton("🏠 В меню", callback_data="main_menu")])
+    
+    await query.edit_message_text(
+        "💼 Доступные вакансии в Великобритании:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return VIEW_VACANCIES
+
+async def view_vacancy_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    vac_id = query.data.split("_")[1]
+    vacancy = next((v for v in VACANCIES if v["id"] == vac_id), None)
+    
+    if not vacancy:
+        await query.edit_message_text("❌ Вакансия не найдена!")
+        return await main_menu(update, context)
+    
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Назад к вакансиям", callback_data="view_vacancies")],
+        [InlineKeyboardButton("🏠 В меню", callback_data="main_menu")]
+    ])
+    
+    await query.edit_message_text(
+        vacancy["description"],
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+    return VIEW_VACANCY_DETAILS
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🚫 Операция отменена")
+    return await main_menu(update, context)
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Ошибка: {context.error}\n{traceback.format_exc()}")
+    if update:
+        msg = update.message or update.callback_query.message
+        await msg.reply_text("⚠️ Произошла ошибка! Попробуйте снова.")
+
+# Настройка обработчиков
+conv_handler = ConversationHandler(
+    entry_points=[CommandHandler("start", start)],
+    states={
+        MAIN_MENU: [
+            CallbackQueryHandler(select_template, pattern="^select_template$"),
+            CallbackQueryHandler(view_bookmarks, pattern="^view_bookmarks$"),
+            CallbackQueryHandler(view_vacancies, pattern="^view_vacancies$"),
+        ],
+        SELECT_TEMPLATE: [
+            CallbackQueryHandler(handle_template_selection, pattern="^(ur_recruitment|small_world|imperative)$"),
+            CallbackQueryHandler(main_menu, pattern="^main_menu$")
+        ],
+        INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
+        CHANGE_DATE: [
+            CallbackQueryHandler(bookmark, pattern="^bookmark$"),
+            CallbackQueryHandler(change_date, pattern="^change_date$"),
+            CallbackQueryHandler(select_template, pattern="^select_template$"),
+            CallbackQueryHandler(main_menu, pattern="^main_menu$")
+        ],
+        INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
+        VIEW_BOOKMARKS: [
+            CallbackQueryHandler(main_menu, pattern="^main_menu$")
+        ],
+        VIEW_VACANCIES: [
+            CallbackQueryHandler(view_vacancy_details, pattern="^vacancy_"),
+            CallbackQueryHandler(main_menu, pattern="^main_menu$")
+        ],
+        VIEW_VACANCY_DETAILS: [
+            CallbackQueryHandler(view_vacancies, pattern="^view_vacancies$"),
+            CallbackQueryHandler(main_menu, pattern="^main_menu$")
+        ]
+    },
+    fallbacks=[CommandHandler("cancel", cancel)]
+)
+
+application.add_handler(conv_handler)
+application.add_error_handler(error_handler)
+
+# Вебхук
+async def webhook_handler(request):
+    try:
+        update = telegram.Update.de_json(await request.json(), application.bot)
+        await application.process_update(update)
+        return web.Response(status=200)
+    except Exception as e:
+        logger.error(f"Ошибка вебхука: {e}")
+        return web.Response(status=500)
+
+async def run_server():
+    """Запуск сервера"""
+    app = web.Application()
+    app.router.add_post("/webhook", webhook_handler)
+    app.router.add_get("/ping", lambda _: web.Response(text="OK"))
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    
+    await application.initialize()
+    await application.start()
+    await site.start()
+    
+    logger.info(f"🚀 Сервер запущен на порту {port}")
+    
+    while True:
+        await asyncio.sleep(3600)
+
+if __name__ == "__main__":
+    # Проверка директорий
+    required_dirs = ["templates"]
+    for directory in required_dirs:
+        if not os.path.exists(directory):
+            logger.error(f"❌ Отсутствует директория: {directory}!")
+            exit(1)
+    
+    try:
+        asyncio.run(run_server())
+    except KeyboardInterrupt:
+        logger.info("🛑 Бот остановлен")
+    except Exception as e:
+        logger.critical(f"💥 Критическая ошибка: {e}")
+        exit(1)
