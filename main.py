@@ -442,7 +442,7 @@ async def templates_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Настройка приложения
 application = (
     Application.builder()
-    .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
+    .token("7677140739:AAGINNKHHEv2R2fZ34HPRfec_rR8Kmt6vI4")
     .build()
 )
 
