@@ -1,4 +1,5 @@
-python-telegram-bot==20.7
-Flask==3.0.3
-python-docx
-fpdf
+python-telegram-bot==13.7
+mammoth==1.8.0
+beautifulsoup4==4.12.3
+weasyprint==62.3
+pytz==2024.2
