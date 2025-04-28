@@ -14,8 +14,7 @@ WEBHOOK_URL = "https://final-bot1-0.onrender.com/webhook"
 PORT = 5000
 
 # Настройка логирования
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levellevel)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # Состояния диалога
 CHOOSING_TEMPLATE, ENTERING_CLIENT_NAME, CHOOSING_DATE_OPTION, ENTERING_DATE = range(4)
