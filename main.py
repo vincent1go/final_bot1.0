@@ -105,7 +105,7 @@ def convert_to_pdf(doc_path, client_name):
         logger.info(f"Запуск конвертации {doc_path} в PDF")
         subprocess.run(
             [
-                "libreoffice",
+                "soffice",  # Используем soffice вместо libreoffice
                 "--headless",
                 "--norestore",
                 "--nofirststartwizard",
@@ -116,7 +116,7 @@ def convert_to_pdf(doc_path, client_name):
                 doc_path
             ],
             check=True,
-            timeout=30
+            timeout=60  # Увеличен тайм-аут для стабильности
         )
         temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
         if not os.path.exists(temp_pdf):
@@ -141,8 +141,8 @@ def convert_to_pdf(doc_path, client_name):
 # Главное меню
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("Шаблон", callback_data="select_template")],
-        [InlineKeyboardButton("Сохранённые", callback_data="view_bookmarks")],
+        [InlineKeyboardButton("Создать документ", callback_data="select_template")],
+        [InlineKeyboardButton("Мои сохранённые", callback_data="view_bookmarks")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -175,7 +175,7 @@ async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.message.reply_text(
-        "Выберите шаблон:",
+        "Выберите шаблон документа:",
         reply_markup=reply_markup
     )
     return SELECT_TEMPLATE
@@ -205,7 +205,7 @@ async def generate_document(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
     try:
-        await reply_func("Ожидайте, ваш документ генерируется...")
+        await reply_func("Генерируем ваш документ, пожалуйста, подождите...")
         temp_doc = replace_client_and_date(template_path, client_name, date_str, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
@@ -217,26 +217,30 @@ async def generate_document(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
         
         keyboard = [
-            [InlineKeyboardButton("Сохранить", callback_data="bookmark")],
+            [InlineKeyboardButton("Сохранить документ", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
-            [InlineKeyboardButton("К шаблонам", callback_data="select_template")],
-            [InlineKeyboardButton("Меню", callback_data="main_menu")],
+            [InlineKeyboardButton("Другие шаблоны", callback_data="select_template")],
+            [InlineKeyboardButton("Главное меню", callback_data="main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await reply_func(
-            "Документ сгенерирован! Что хотите сделать дальше?\n"
-            "Или введите имя нового клиента для генерации документа по текущему шаблону.",
+            "Ваш документ готов! Что хотите сделать дальше?\n"
+            "Или введите имя нового клиента для создания другого документа с текущим шаблоном.",
             reply_markup=reply_markup
         )
         return AFTER_GENERATION
     except FileNotFoundError as e:
         logger.error(f"Файл не найден: {e}")
-        await reply_func("Шаблон или файл не найден. Свяжитесь с поддержкой.")
+        await reply_func("Ошибка: шаблон не найден. Попробуйте снова или свяжитесь с поддержкой.")
         return ConversationHandler.END
     except subprocess.CalledProcessError as e:
         logger.error(f"Ошибка конвертации в PDF: {e}")
-        await reply_func("Ошибка при создании PDF. Попробуйте снова позже.")
+        await reply_func("Ошибка при создании документа. Попробуйте снова позже.")
+        return ConversationHandler.END
+    except subprocess.TimeoutExpired:
+        logger.error("Превышено время ожидания для конвертации")
+        await reply_func("Создание документа заняло слишком много времени. Попробуйте снова.")
         return ConversationHandler.END
     except Exception as e:
         logger.error(f"Неизвестная ошибка: {e}\nПолный traceback: {traceback.format_exc()}")
@@ -246,6 +250,9 @@ async def generate_document(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 # Обработчик ввода имени клиента
 async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client_name = update.message.text.strip()
+    if not client_name:
+        await update.message.reply_text("Имя клиента не может быть пустым. Пожалуйста, введите имя:")
+        return INPUT_NAME
     context.user_data["client_name"] = client_name
     
     template_key = context.user_data["template_key"]
@@ -258,6 +265,9 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Обработчик ввода нового имени клиента после генерации
 async def receive_another_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client_name = update.message.text.strip()
+    if not client_name:
+        await update.message.reply_text("Имя клиента не может быть пустым. Пожалуйста, введите имя:")
+        return AFTER_GENERATION
     context.user_data["client_name"] = client_name
     
     template_key = context.user_data["template_key"]
@@ -284,10 +294,10 @@ async def bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         conn.commit()
         conn.close()
-        await query.message.reply_text("Документ успешно добавлен в закладки!")
+        await query.message.reply_text("Документ сохранён в закладки!")
     except Exception as e:
         logger.error(f"Ошибка при добавлении закладки: {e}")
-        await query.message.reply_text("Ошибка при сохранении закладки. Попробуйте снова.")
+        await query.message.reply_text("Не удалось сохранить документ. Попробуйте снова.")
     
     return AFTER_GENERATION
 
@@ -296,7 +306,7 @@ async def change_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    await query.message.reply_text("Введите новую дату (например, 2025-04-28, 28.04.2025, 28/04/2025 и т.д.):")
+    await query.message.reply_text("Введите новую дату (например, 2025-04-28, 28.04.2025, 28/04/2025):")
     return INPUT_NEW_DATE
 
 async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -329,9 +339,9 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if not bookmarks:
             if update.message:
-                await update.message.reply_text("У вас нет сохранённых закладок.")
+                await update.message.reply_text("У вас нет сохранённых документов.")
             else:
-                await update.callback_query.message.reply_text("У вас нет сохранённых закладок.")
+                await update.callback_query.message.reply_text("У вас нет сохранённых документов.")
             return await main_menu(update, context)
         
         keyboard = [
@@ -343,26 +353,26 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ]
             for client_name, template_name, date in bookmarks
         ]
-        keyboard.append([InlineKeyboardButton("Меню", callback_data="main_menu")])
+        keyboard.append([InlineKeyboardButton("Главное меню", callback_data="main_menu")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         if update.message:
             await update.message.reply_text(
-                "Выберите сохранённый документ для повторной генерации:",
+                "Выберите документ для повторного создания:",
                 reply_markup=reply_markup
             )
         else:
             await update.callback_query.message.reply_text(
-                "Выберите сохранённый документ для повторной генерации:",
+                "Выберите документ для повторного создания:",
                 reply_markup=reply_markup
             )
         return VIEW_BOOKMARKS
     except Exception as e:
         logger.error(f"Ошибка при просмотре закладок: {e}")
         if update.message:
-            await update.message.reply_text("Ошибка при загрузке закладок. Попробуйте снова.")
+            await update.message.reply_text("Не удалось загрузить сохранённые документы. Попробуйте снова.")
         else:
-            await update.callback_query.message.reply_text("Ошибка при загрузке закладок. Попробуйте снова.")
+            await update.callback_query.message.reply_text("Не удалось загрузить сохранённые документы. Попробуйте снова.")
         return await main_menu(update, context)
 
 # Повторная генерация из закладок
@@ -387,11 +397,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "Как использовать бота:\n"
         "1. Нажмите /start, чтобы начать.\n"
-        "2. Выберите 'Шаблон' и укажите тип документа.\n"
+        "2. Выберите 'Создать документ' и выберите шаблон.\n"
         "3. Введите имя клиента.\n"
-        "4. После генерации выберите действие: сохранить, изменить дату или создать новый документ.\n"
-        "5. Используйте 'Сохранённые', чтобы повторить генерацию старых документов.\n"
-        "Если что-то не работает, пишите в поддержку!"
+        "4. После создания документа выберите: сохранить, изменить дату или создать новый.\n"
+        "5. В разделе 'Мои сохранённые' можно повторить создание старых документов.\n"
+        "Если возникли проблемы, напишите в поддержку!"
     )
     await update.message.reply_text(help_text)
     return await main_menu(update, context)
@@ -427,24 +437,25 @@ def main():
             ],
             states={
                 MAIN_MENU: [
-                    CallbackQueryHandler(select_template, pattern="select_template"),
-                    CallbackQueryHandler(view_bookmarks, pattern="view_bookmarks"),
-                    CallbackQueryHandler(main_menu, pattern="main_menu"),
+                    CallbackQueryHandler(select_template, pattern "select_template"),
+                    CallbackQueryHandler(view_bookmarks, pattern "view_bookmarks"),
+                    CallbackQueryHandler(main_menu, pattern "main_menu"),
                 ],
                 SELECT_TEMPLATE: [CallbackQueryHandler(handle_template_selection)],
                 INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
                 AFTER_GENERATION: [
-                    CallbackQueryHandler(bookmark, pattern="bookmark"),
-                    CallbackQueryHandler(change_date, pattern="change_date"),
-                    CallbackQueryHandler(select_template, pattern="select_template"),
-                    CallbackQueryHandler(main_menu, pattern="main_menu"),
+                    CallbackQueryHandler(bookmark, pattern "bookmark"),
+                    CallbackQueryHandler(change_date, pattern "change_date"),
+                    CallbackQueryHandler(select_template, pattern "select_template"),
+                    CallbackQueryHandler(main_menu, pattern "main_menu"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name),
                 ],
-                CHANGE_DATE: [CallbackQueryHandler(change_date, pattern="change_date")],
+                CHANGE_DATE: [CallbackQueryHandler(change_date, pattern "change_date")],
                 INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
-                VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*")],
+                VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern "bookmark_.*")],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
+            per_message=True,  # Устраняет PTBUserWarning
         )
         
         application.add_handler(conv_handler)
@@ -467,6 +478,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-if __name__ == "__main__":
-    main()
-    
