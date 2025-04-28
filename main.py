@@ -40,41 +40,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Состояния диалога
+# Состояния диалога (исправлена опечатка в GENERATE_ANOTHER)
 (
     MAIN_MENU,
     SELECT_TEMPLATE,
     INPUT_NAME,
     CHANGE_DATE,
     INPUT_NEW_DATE,
-    GENERATЕ_ANOTHER,
+    GENERATE_ANOTHER,  # Было GENERATЕ_ANOTHER с русской "Е"
     VIEW_BOOKMARKS
 ) = range(7)
 
-# Инициализация базы данных
-def init_db():
-    with sqlite3.connect("bookmarks.db") as conn:
-        c = conn.cursor()
-        c.execute("""CREATE TABLE IF NOT EXISTS bookmarks
-                    (user_id INTEGER, 
-                     client_name TEXT, 
-                     template_name TEXT, 
-                     date TEXT)""")
-        conn.commit()
+# Инициализация приложения Telegram (добавлено здесь)
+application = Application.builder().token(BOT_TOKEN).build()
 
-init_db()
-
-# Шаблоны документов
-TEMPLATES = {
-    "ur_recruitment": "template_ur.docx",
-    "small_world": "template_small_world.docx",
-    "imperative": "template_imperative.docx",
-}
-
-# ... (все остальные функции остаются без изменений из предыдущего варианта) ...
+# ... (остальные функции и код остаются без изменений до run_server) ...
 
 async def run_server():
     """Запуск сервера с правильной инициализацией"""
+    # Инициализация переменных для корректного завершения
+    runner = None
+    site = None
+    
     try:
         # Инициализация PTB
         await application.initialize()
@@ -88,7 +75,7 @@ async def run_server():
         runner = web.AppRunner(app)
         await runner.setup()
         
-        port = int(os.getenv("PORT", 10000))  # Для Render используйте 10000
+        port = int(os.getenv("PORT", 10000))
         site = web.TCPSite(runner, "0.0.0.0", port)
         
         await site.start()
@@ -103,10 +90,14 @@ async def run_server():
         raise
     finally:
         logger.info("🛑 Завершение работы...")
-        await site.stop()
-        await runner.cleanup()
-        await application.stop()
-        await application.shutdown()
+        # Корректное завершение только если объекты были инициализированы
+        if site:
+            await site.stop()
+        if runner:
+            await runner.cleanup()
+        if application:
+            await application.stop()
+            await application.shutdown()
 
 if __name__ == "__main__":
     # Проверка обязательных директорий
