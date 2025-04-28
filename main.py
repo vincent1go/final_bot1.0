@@ -1,12 +1,9 @@
 import os
 import uuid
+import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import docx
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import inch
-from reportlab.lib import colors
 import telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -20,7 +17,6 @@ from telegram.ext import (
 )
 import sqlite3
 import logging
-import io
 
 # Настройка логирования
 logging.basicConfig(
@@ -73,25 +69,32 @@ def replace_client_and_date(doc_path, client_name, date_str):
     doc.save(temp_path)
     return temp_path
 
-def create_pdf(doc_path, client_name):
+def convert_to_pdf(doc_path, client_name):
     pdf_path = f"{client_name}.pdf"
-    doc = docx.Document(doc_path)
-    
-    # Создание PDF с помощью reportlab
-    c = canvas.Canvas(pdf_path, pagesize=A4)
-    width, height = A4
-    y_position = height - inch  # Начальная позиция для текста
-    
-    # Извлечение текста из документа и добавление в PDF
-    for para in doc.paragraphs:
-        if y_position < inch:  # Если страница заполнена, начать новую
-            c.showPage()
-            y_position = height - inch
-        c.drawString(inch, y_position, para.text)
-        y_position -= 14  # Отступ между строками
-    
-    c.save()
-    return pdf_path
+    try:
+        # Вызов libreoffice для конвертации
+        subprocess.run(
+            [
+                "libreoffice",
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                os.path.dirname(doc_path),
+                doc_path
+            ],
+            check=True
+        )
+        # Переименование файла
+        temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
+        os.rename(temp_pdf, pdf_path)
+        return pdf_path
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Ошибка конвертации в PDF: {e}")
+        raise
+    except FileNotFoundError:
+        logger.error("LibreOffice не найден в системе")
+        raise
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
@@ -133,7 +136,7 @@ async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Обработка документа
     temp_doc = replace_client_and_date(template_path, client_name, current_date)
-    pdf_path = create_pdf(temp_doc, client_name)
+    pdf_path = convert_to_pdf(temp_doc, client_name)
     
     # Отправка PDF
     with open(pdf_path, "rb") as f:
@@ -200,7 +203,7 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Обработка документа с новой датой
     temp_doc = replace_client_and_date(template_path, client_name, new_date)
-    pdf_path = create_pdf(temp_doc, client_name)
+    pdf_path = convert_to_pdf(temp_doc, client_name)
     
     # Отправка PDF
     with open(pdf_path, "rb") as f:
@@ -275,7 +278,7 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     template_path = os.path.join("templates", TEMPLATES[template_key])
     temp_doc = replace_client_and_date(template_path, client_name, date)
-    pdf_path = create_pdf(temp_doc, client_name)
+    pdf_path = convert_to_pdf(temp_doc, client_name)
     
     # Отправка PDF
     with open(pdf_path, "rb") as f:
@@ -342,6 +345,9 @@ def main():
         url_path="/webhook",
         webhook_url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
     )
+
+if __name__ == "__main__":
+    main()
 
 if __name__ == "__main__":
     main()
