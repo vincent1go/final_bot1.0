@@ -414,10 +414,12 @@ def main():
                 ],
                 CHANGE_DATE: [CallbackQueryHandler(change_date, pattern="change_date")],
                 INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
-                VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*")],
+                VIEW_BOOKMARKS: [
+                    CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*"),
+                    CallbackQueryHandler(main_menu, pattern="main_menu"),
+                ],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
-            per_message=True,  # Устраняет PTBUserWarning
         )
         
         application.add_handler(conv_handler)
@@ -440,4 +442,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
