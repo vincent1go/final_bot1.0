@@ -8,6 +8,9 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# Создание непривилегированного пользователя
+RUN useradd -m -s /bin/bash appuser
+
 # Установка рабочей директории
 WORKDIR /app
 
@@ -16,8 +19,14 @@ COPY requirements.txt .
 COPY main.py .
 COPY templates/ templates/
 
+# Изменение владельца файлов
+RUN chown -R appuser:appuser /app
+
+# Переключение на непривилегированного пользователя
+USER appuser
+
 # Установка Python-зависимостей
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Команда для запуска бота
 CMD ["python", "main.py"]
