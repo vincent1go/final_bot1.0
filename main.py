@@ -1,10 +1,10 @@
 import os
 import uuid
-import subprocess
 import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import docx
+from docx2pdf import convert
 import telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -99,43 +99,13 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
 def convert_to_pdf(doc_path, client_name):
     pdf_path = f"{client_name}.pdf"
     try:
-        if not os.path.exists(doc_path):
-            raise FileNotFoundError(f"Временный файл {doc_path} не найден")
-        
-        logger.info(f"Запуск конвертации {doc_path} в PDF")
-        subprocess.run(
-            [
-                "soffice",  # Используем soffice вместо libreoffice
-                "--headless",
-                "--norestore",
-                "--nofirststartwizard",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                os.path.dirname(doc_path) or ".",
-                doc_path
-            ],
-            check=True,
-            timeout=60  # Увеличен тайм-аут для стабильности
-        )
-        temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
-        if not os.path.exists(temp_pdf):
-            raise FileNotFoundError(f"PDF-файл {temp_pdf} не создан")
-        
-        os.rename(temp_pdf, pdf_path)
+        convert(doc_path, pdf_path)
+        if not os.path.exists(pdf_path):
+            raise FileNotFoundError(f"PDF-файл {pdf_path} не создан")
         logger.info(f"PDF создан: {pdf_path}")
         return pdf_path
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка конвертации в PDF: {e}")
-        raise
-    except FileNotFoundError as e:
-        logger.error(f"Файл не найден: {e}")
-        raise
-    except subprocess.TimeoutExpired:
-        logger.error("Превышено время ожидания для конвертации LibreOffice")
-        raise
     except Exception as e:
-        logger.error(f"Неизвестная ошибка при конвертации: {e}")
+        logger.error(f"Ошибка конвертации в PDF: {e}")
         raise
 
 # Главное меню
@@ -234,17 +204,9 @@ async def generate_document(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         logger.error(f"Файл не найден: {e}")
         await reply_func("Ошибка: шаблон не найден. Попробуйте снова или свяжитесь с поддержкой.")
         return ConversationHandler.END
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка конвертации в PDF: {e}")
-        await reply_func("Ошибка при создании документа. Попробуйте снова позже.")
-        return ConversationHandler.END
-    except subprocess.TimeoutExpired:
-        logger.error("Превышено время ожидания для конвертации")
-        await reply_func("Создание документа заняло слишком много времени. Попробуйте снова.")
-        return ConversationHandler.END
     except Exception as e:
         logger.error(f"Неизвестная ошибка: {e}\nПолный traceback: {traceback.format_exc()}")
-        await reply_func("Произошла ошибка. Попробуйте снова или свяжитесь с поддержкой.")
+        await reply_func("Произошла ошибка при создании документа. Попробуйте снова.")
         return ConversationHandler.END
 
 # Обработчик ввода имени клиента
@@ -438,21 +400,21 @@ def main():
             states={
                 MAIN_MENU: [
                     CallbackQueryHandler(select_template, pattern="select_template"),
-                    CallbackQueryHandler(view_bookmarks, pattern "view_bookmarks"),
-                    CallbackQueryHandler(main_menu, pattern "main_menu"),
+                    CallbackQueryHandler(view_bookmarks, pattern="view_bookmarks"),
+                    CallbackQueryHandler(main_menu, pattern="main_menu"),
                 ],
                 SELECT_TEMPLATE: [CallbackQueryHandler(handle_template_selection)],
                 INPUT_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)],
                 AFTER_GENERATION: [
-                    CallbackQueryHandler(bookmark, pattern "bookmark"),
-                    CallbackQueryHandler(change_date, pattern "change_date"),
-                    CallbackQueryHandler(select_template, pattern "select_template"),
-                    CallbackQueryHandler(main_menu, pattern "main_menu"),
+                    CallbackQueryHandler(bookmark, pattern="bookmark"),
+                    CallbackQueryHandler(change_date, pattern="change_date"),
+                    CallbackQueryHandler(select_template, pattern="select_template"),
+                    CallbackQueryHandler(main_menu, pattern="main_menu"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, receive_another_name),
                 ],
-                CHANGE_DATE: [CallbackQueryHandler(change_date, pattern "change_date")],
+                CHANGE_DATE: [CallbackQueryHandler(change_date, pattern="change_date")],
                 INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
-                VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern "bookmark_.*")],
+                VIEW_BOOKMARKS: [CallbackQueryHandler(regenerate_bookmark, pattern="bookmark_.*")],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
             per_message=True,  # Устраняет PTBUserWarning
