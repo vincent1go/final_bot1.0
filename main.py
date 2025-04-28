@@ -61,6 +61,30 @@ def set_page_margins(doc, top=1.0, bottom=1.0, left=1.0, right=1.0):
         section.right_margin = Inches(right)
         logger.info(f"Установлены поля страницы: top={top}, bottom={bottom}, left={left}, right={right}")
 
+def replace_text_in_new_paragraph(doc, para_index, search_text, new_text):
+    """Создаёт новый параграф для редактируемого текста и переносит его туда."""
+    para = doc.paragraphs[para_index]
+    # Создаём новый параграф сразу после текущего
+    new_para_xml = doc.paragraphs[para_index]._element
+    new_para_xml.getparent().insert(new_para_xml.getparent().index(new_para_xml) + 1, docx.oxml.CT_P())
+    new_para = doc.paragraphs[para_index + 1]
+    
+    # Добавляем новый текст в новый параграф
+    new_run = new_para.add_run(new_text)
+    # Копируем форматирование из первого run текущего параграфа
+    if para.runs:
+        first_run = para.runs[0]
+        new_run.bold = first_run.bold
+        new_run.italic = first_run.italic
+        new_run.underline = first_run.underline
+        new_run.font.size = first_run.font.size
+    
+    # Удаляем искомый текст из старого параграфа
+    for run in para.runs:
+        if search_text in run.text:
+            run.text = run.text.replace(search_text, "")
+    return para_index + 1  # Возвращаем индекс нового параграфа
+
 def replace_client_and_date(doc_path, client_name, date_str, template_key):
     try:
         if not os.path.exists(doc_path):
@@ -73,20 +97,15 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         
         # Замена Client
         client_replaced = False
-        for i, para in enumerate(doc.paragraphs):
+        para_index = 0
+        while para_index < len(doc.paragraphs):
+            para = doc.paragraphs[para_index]
             if "Client:" in para.text:
-                # Проверяем, есть ли текст перед Client: в этом параграфе
-                if para.text.strip() != "Client:":
+                # Проверяем, содержит ли параграф только "Client:" (без других символов, кроме пробелов)
+                if para.text.replace(" ", "").replace("\t", "") != "Client:":
+                    logger.info(f"Client: не в отдельном параграфе в {doc_path}: '{para.text}'")
                     # Создаём новый параграф для Client:
-                    new_para = doc.paragraphs[i]._element
-                    new_para.getparent().insert(new_para.getparent().index(new_para) + 1, docx.oxml.CT_P())
-                    new_client_para = doc.paragraphs[i + 1]
-                    new_client_para.add_run("Client: " + client_name)
-                    # Очищаем старый параграф от Client:
-                    for run in para.runs:
-                        if "Client:" in run.text:
-                            run.text = run.text.replace("Client:", "")
-                    client_replaced = True
+                    para_index = replace_text_in_new_paragraph(doc, para_index, "Client:", f"Client: {client_name}")
                 else:
                     # Если Client: уже в отдельном параграфе, заменяем текст
                     new_runs = []
@@ -101,37 +120,51 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
                         new_run.italic = run.italic
                         new_run.underline = run.underline
                         new_run.font.size = run.font.size
-                    client_replaced = True
+                    para_index += 1
+                client_replaced = True
                 break
+            para_index += 1
         if not client_replaced:
             logger.warning(f"Поле 'Client:' не найдено в {doc_path}")
         
         # Замена Date (дважды на последней странице)
         date_replaced_count = 0
-        for para in doc.paragraphs:
+        para_index = 0
+        while para_index < len(doc.paragraphs) and date_replaced_count < 2:
+            para = doc.paragraphs[para_index]
             if ("Date:" in para.text or "DATE:" in para.text) and date_replaced_count < 2:
-                new_runs = []
-                has_image = False
-                # Проверяем, есть ли изображения в параграфе
-                for run in para.runs:
-                    if run._element.xpath('.//w:drawing') or run._element.xpath('.//w:pict'):
-                        has_image = True
-                        logger.info(f"Найдено изображение в параграфе с Date: {para.text}")
-                    if "Date:" in run.text:
-                        run.text = run.text.replace("Date:", f"Date: {date_str}")
-                    elif "DATE:" in run.text:
-                        run.text = run.text.replace("DATE:", f"Date: {date_str}")
-                    new_runs.append(run)
-                para.clear()
-                for run in new_runs:
-                    new_run = para.add_run(run.text)
-                    new_run.bold = run.bold
-                    new_run.italic = run.italic
-                    new_run.underline = run.underline
-                    new_run.font.size = run.font.size
+                date_field = "Date:" if "Date:" in para.text else "DATE:"
+                # Проверяем, содержит ли параграф только "Date:" или "DATE:" (без других символов, кроме пробелов)
+                if para.text.replace(" ", "").replace("\t", "") not in ["Date:", "DATE:"]:
+                    logger.info(f"Date: не в отдельном параграфе в {doc_path}: '{para.text}'")
+                    # Создаём новый параграф для Date:
+                    para_index = replace_text_in_new_paragraph(doc, para_index, date_field, f"Date: {date_str}")
+                else:
+                    # Если Date: уже в отдельном параграфе, заменяем текст
+                    new_runs = []
+                    has_image = False
+                    for run in para.runs:
+                        if run._element.xpath('.//w:drawing') or run._element.xpath('.//w:pict'):
+                            has_image = True
+                            logger.info(f"Найдено изображение в параграфе с Date: {para.text}")
+                        if "Date:" in run.text:
+                            run.text = run.text.replace("Date:", f"Date: {date_str}")
+                        elif "DATE:" in run.text:
+                            run.text = run.text.replace("DATE:", f"Date: {date_str}")
+                        new_runs.append(run)
+                    para.clear()
+                    for run in new_runs:
+                        new_run = para.add_run(run.text)
+                        new_run.bold = run.bold
+                        new_run.italic = run.italic
+                        new_run.underline = run.underline
+                        new_run.font.size = run.font.size
+                    para_index += 1
+                    if has_image:
+                        logger.info(f"Сохранены изображения в параграфе с Date: {para.text}")
                 date_replaced_count += 1
-                if has_image:
-                    logger.info(f"Сохранены изображения в параграфе с Date: {para.text}")
+            else:
+                para_index += 1
         if date_replaced_count != 2:
             logger.warning(f"Ожидалось 2 замены даты, выполнено {date_replaced_count} в {doc_path}")
         
@@ -147,7 +180,7 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
 def convert_to_pdf(doc_path, client_name):
     pdf_path = f"{client_name}.pdf"
     try:
-        # Используем LibreOffice для конвертации с масштабированием
+        # Используем LibreOffice для конвертации
         cmd = [
             "soffice",
             "--headless",
