@@ -18,29 +18,13 @@ from telegram.ext import (
 import sqlite3
 import logging
 from dateutil.parser import parse
-from flask import Flask
-from threading import Thread
+from aiohttp import web
 
 # Настройка логирования
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
 )
 logger = logging.getLogger(__name__)
-
-# Flask-приложение для Uptime Robot
-app = Flask('')
-
-@app.route('/ping')
-def ping():
-    logger.info("Получен запрос на /ping от Uptime Robot")
-    return "Bot is alive!"
-
-def run_flask():
-    app.run(host='0.0.0.0', port=8080)
-
-def keep_alive():
-    t = Thread(target=run_flask)
-    t.start()
 
 # Состояния бота
 MAIN_MENU, SELECT_TEMPLATE, INPUT_NAME, CHANGE_DATE, INPUT_NEW_DATE, GENERATE_ANOTHER, VIEW_BOOKMARKS = range(7)
@@ -112,51 +96,10 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         logger.info(f"Создан временный файл: {temp_path}")
         return temp_path
     except Exception as e:
-        logger.error(f"Ошибка при обработке документа {doc_path}: {e}")
-        raise
-
-def convert_to_pdf(doc_path, client_name):
-    pdf_path = f"{client_name}.pdf"
-    try:
-        if not os.path.exists(doc_path):
-            raise FileNotFoundError(f"Временный файл {doc_path} не найден")
-        
-        # Вызов libreoffice для конвертации с ускорением
-        logger.info(f"Запуск конвертации {doc_path} в PDF")
-        subprocess.run(
-            [
-                "libreoffice",
-                "--headless",
-                "--nofirststartwizard",  # Ускорение запуска LibreOffice
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                os.path.dirname(doc_path) or ".",  # Убедимся, что outdir не пустой
-                doc_path
-            ],
-            check=True,
-            timeout=60  # Увеличенный таймаут
-        )
-        # Переименование файла
-        temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
-        if not os.path.exists(temp_pdf):
-            raise FileNotFoundError(f"PDF-файл {temp_pdf} не создан")
-        
-        os.rename(temp_pdf, pdf_path)
-        logger.info(f"PDF создан: {pdf_path}")
-        return pdf_path
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка конвертации в PDF: {e}")
-        raise
-    except FileNotFoundError as e:
-        logger.error(f"Файл не найден: {e}")
-        raise
-    except subprocess.TimeoutExpired:
-        logger.error("Превышено время ожидания для конвертации LibreOffice")
-        raise
-    except Exception as e:
-        logger.error(f"Неизвестная ошибка при конвертации: {e}")
-        raise
+        logger.error(f"VPing для Uptime Robot
+async def ping(request):
+    logger.info("Получен запрос на /ping от Uptime Robot")
+    return web.Response(text="Bot is alive!")
 
 # Главное меню
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -343,7 +286,7 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Ошибка в receive_new_date: {e}")
         await update.message.reply_text(
-            "Произошла ошибка при создании документа. Попробуйте снова или свяжитесь с поддержкой."
+            "Произошла ошибка при создания документа. Попробуйте снова или свяжитесь с поддержкой."
         )
         return ConversationHandler.END
 
@@ -523,9 +466,6 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     try:
-        # Запускаем Flask для Uptime Robot
-        keep_alive()
-        
         application = (
             Application.builder()
             .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
@@ -571,13 +511,20 @@ def main():
             logger.error("Директория templates не найдена")
             raise FileNotFoundError("Директория templates не найдена")
         
-        # Запуск бота с вебхуком
-        logger.info("Запуск приложения с вебхуком")
+        # Запуск бота с вебхуком и добавление маршрута /ping
+        port = int(os.environ.get("PORT", 8443))
+        webhook_url = f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+        logger.info(f"Запуск приложения с вебхуком на порту {port}, webhook: {webhook_url}")
+        
+        # Добавляем маршрут /ping в сервер aiohttp
+        app = application.bot.webhook_app
+        app.router.add_get("/ping", ping)
+        
         application.run_webhook(
             listen="0.0.0.0",
-            port=int(os.environ.get("PORT", 8443)),
+            port=port,
             url_path="/webhook",
-            webhook_url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+            webhook_url=webhook_url
         )
     except Exception as e:
         logger.error(f"Ошибка при запуске приложения: {e}\nПолный traceback: {traceback.format_exc()}")
