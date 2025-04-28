@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import docx
 from docx.oxml.ns import qn
 from docx.text.run import Run
+from docx.shared import Inches
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -51,6 +52,15 @@ TEMPLATES = {
     "imperative": "template_imperative.docx",
 }
 
+def set_page_margins(doc, top=1.0, bottom=1.0, left=1.0, right=1.0):
+    """Устанавливает поля страницы в дюймах."""
+    for section in doc.sections:
+        section.top_margin = Inches(top)
+        section.bottom_margin = Inches(bottom)
+        section.left_margin = Inches(left)
+        section.right_margin = Inches(right)
+        logger.info(f"Установлены поля страницы: top={top}, bottom={bottom}, left={left}, right={right}")
+
 def replace_client_and_date(doc_path, client_name, date_str, template_key):
     try:
         if not os.path.exists(doc_path):
@@ -58,19 +68,32 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         
         doc = docx.Document(doc_path)
         
+        # Устанавливаем поля страницы, чтобы гарантировать, что элементы не обрезаются
+        set_page_margins(doc, top=0.5, bottom=0.5, left=0.5, right=0.5)
+        
         # Замена Client
         client_replaced = False
-        for para in doc.paragraphs:
+        for i, para in enumerate(doc.paragraphs):
             if "Client:" in para.text:
-                # Разбиваем параграф на части и заменяем только текст
-                new_runs = []
-                for run in para.runs:
-                    if "Client:" in run.text:
-                        run.text = run.text.replace("Client:", f"Client: {client_name}")
-                        client_replaced = True
-                    new_runs.append(run)
-                if client_replaced:
-                    # Очищаем параграф и добавляем обновлённые runs
+                # Проверяем, есть ли текст перед Client: в этом параграфе
+                if para.text.strip() != "Client:":
+                    # Создаём новый параграф для Client:
+                    new_para = doc.paragraphs[i]._element
+                    new_para.getparent().insert(new_para.getparent().index(new_para) + 1, docx.oxml.CT_P())
+                    new_client_para = doc.paragraphs[i + 1]
+                    new_client_para.add_run("Client: " + client_name)
+                    # Очищаем старый параграф от Client:
+                    for run in para.runs:
+                        if "Client:" in run.text:
+                            run.text = run.text.replace("Client:", "")
+                    client_replaced = True
+                else:
+                    # Если Client: уже в отдельном параграфе, заменяем текст
+                    new_runs = []
+                    for run in para.runs:
+                        if "Client:" in run.text:
+                            run.text = run.text.replace("Client:", f"Client: {client_name}")
+                        new_runs.append(run)
                     para.clear()
                     for run in new_runs:
                         new_run = para.add_run(run.text)
@@ -78,6 +101,7 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
                         new_run.italic = run.italic
                         new_run.underline = run.underline
                         new_run.font.size = run.font.size
+                    client_replaced = True
                 break
         if not client_replaced:
             logger.warning(f"Поле 'Client:' не найдено в {doc_path}")
@@ -86,15 +110,18 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         date_replaced_count = 0
         for para in doc.paragraphs:
             if ("Date:" in para.text or "DATE:" in para.text) and date_replaced_count < 2:
-                # Разбиваем параграф на части и заменяем только текст
                 new_runs = []
+                has_image = False
+                # Проверяем, есть ли изображения в параграфе
                 for run in para.runs:
+                    if run._element.xpath('.//w:drawing') or run._element.xpath('.//w:pict'):
+                        has_image = True
+                        logger.info(f"Найдено изображение в параграфе с Date: {para.text}")
                     if "Date:" in run.text:
                         run.text = run.text.replace("Date:", f"Date: {date_str}")
                     elif "DATE:" in run.text:
                         run.text = run.text.replace("DATE:", f"Date: {date_str}")
                     new_runs.append(run)
-                # Очищаем параграф и добавляем обновлённые runs
                 para.clear()
                 for run in new_runs:
                     new_run = para.add_run(run.text)
@@ -103,6 +130,8 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
                     new_run.underline = run.underline
                     new_run.font.size = run.font.size
                 date_replaced_count += 1
+                if has_image:
+                    logger.info(f"Сохранены изображения в параграфе с Date: {para.text}")
         if date_replaced_count != 2:
             logger.warning(f"Ожидалось 2 замены даты, выполнено {date_replaced_count} в {doc_path}")
         
@@ -118,7 +147,7 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
 def convert_to_pdf(doc_path, client_name):
     pdf_path = f"{client_name}.pdf"
     try:
-        # Используем LibreOffice для конвертации
+        # Используем LibreOffice для конвертации с масштабированием
         cmd = [
             "soffice",
             "--headless",
@@ -126,7 +155,7 @@ def convert_to_pdf(doc_path, client_name):
             "pdf",
             "--outdir",
             os.path.dirname(pdf_path),
-            doc_path
+            doc_path,
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         logger.info(f"PDF создан: {pdf_path}\nLibreOffice output: {result.stdout}")
@@ -288,6 +317,7 @@ async def bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         conn = sqlite3.connect("bookmarks.db")
         c = conn.cursor()
+        logger.info(f"Сохранение закладки: user_id={user_id}, client_name={client_name}, template_key={template_key}, date={date}")
         c.execute(
             "INSERT INTO bookmarks (user_id, client_name, template_name, date) VALUES (?, ?, ?, ?)",
             (user_id, client_name, template_key, date)
@@ -344,6 +374,7 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.callback_query.message.reply_text("У вас нет сохранённых документов.")
             return await main_menu(update, context)
         
+        logger.info(f"Извлечённые закладки: {bookmarks}")
         keyboard = [
             [
                 InlineKeyboardButton(
@@ -381,6 +412,7 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     
     _, client_name, template_key, date = query.data.split("_", 3)
+    logger.info(f"Повторная генерация: client_name={client_name}, template_key={template_key}, date={date}")
     context.user_data["client_name"] = client_name
     context.user_data["template_key"] = template_key
     context.user_data["date"] = date
