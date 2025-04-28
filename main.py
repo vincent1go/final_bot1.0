@@ -349,6 +349,7 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute(
             "SELECT client_name, template_name, date FROM bookmarks WHERE user_id = ?",
             (user_id,)
+        )
         bookmarks = c.fetchall()
         conn.close()
         
