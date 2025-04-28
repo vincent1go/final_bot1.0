@@ -6,9 +6,5 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
     envVars:
-      - key: TELEGRAM_TOKEN
-        value: 7511704960:AAFKDWgg2-cAzRxywX1gXK47OQRWJi72qGw
-      - key: WEBHOOK_URL
-        value: https://final-bot1-0.onrender.com/webhook
       - key: PORT
         value: 5000
