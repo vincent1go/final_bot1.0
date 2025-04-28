@@ -25,6 +25,9 @@ RUN chown -R appuser:appuser /app
 # Переключение на непривилегированного пользователя
 USER appuser
 
+# Добавление ~/.local/bin в PATH
+ENV PATH="/home/appuser/.local/bin:${PATH}"
+
 # Установка Python-зависимостей
 RUN pip install --no-cache-dir --user -r requirements.txt
 
