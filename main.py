@@ -560,7 +560,7 @@ async def run_telegram_bot():
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
-        per_message=True
+        per_message=False  # Устанавливаем per_message=False, чтобы разрешить использование MessageHandler
     )
     
     application.add_handler(conv_handler)
@@ -576,18 +576,14 @@ async def run_telegram_bot():
 
 async def main():
     try:
-        # Запускаем aiohttp-сервер для /ping
-        aiohttp_runner = await run_aiohttp_server()
+        # Запускаем aiohttp-сервер в фоновом режиме
+        aiohttp_task = asyncio.create_task(run_aiohttp_server())
         
-        # Запускаем Telegram-бот
+        # Запускаем Telegram-бот (он будет управлять основным событийным циклом)
         await run_telegram_bot()
         
-        # Держим сервер aiohttp запущенным
-        while True:
-            await asyncio.sleep(3600)  # Спим 1 час, чтобы цикл не завершился
-        
-        # Очистка (не достигнем этого, но на всякий случай)
-        await aiohttp_runner.cleanup()
+        # Ожидаем завершения задачи aiohttp (хотя это не произойдёт, так как run_polling не завершится)
+        await aiohttp_task
     except Exception as e:
         logger.error(f"Ошибка при запуске приложения: {e}\nПолный traceback: {traceback.format_exc()}")
         raise
