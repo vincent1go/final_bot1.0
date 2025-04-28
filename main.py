@@ -437,7 +437,7 @@ def main():
             ],
             states={
                 MAIN_MENU: [
-                    CallbackQueryHandler(select_template, pattern "select_template"),
+                    CallbackQueryHandler(select_template, pattern="select_template"),
                     CallbackQueryHandler(view_bookmarks, pattern "view_bookmarks"),
                     CallbackQueryHandler(main_menu, pattern "main_menu"),
                 ],
