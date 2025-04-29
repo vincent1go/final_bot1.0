@@ -4,14 +4,12 @@ import subprocess
 import sqlite3
 import logging
 import asyncio
-import traceback
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import random
 
 import docx
-import telegram
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -23,7 +21,6 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 from dateutil.parser import parse
-from aiohttp import web
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -51,11 +48,8 @@ application = Application.builder().token(BOT_TOKEN).build()
     INPUT_NAME,
     CHANGE_DATE,
     INPUT_NEW_DATE,
-    GENERATE_ANOTHER,
     VIEW_BOOKMARKS,
-    VIEW_VACANCIES,
-    VIEW_VACANCY_DETAILS
-) = range(9)
+) = range(6)
 
 # Инициализация базы данных
 def init_db():
@@ -77,143 +71,7 @@ TEMPLATES = {
     "imperative": "template_imperative.docx",
 }
 
-# База данных вакансий
-VACANCIES = [
-    {
-        "id": "vac_1",
-        "title": "Сотрудники на завод Coca-Cola",
-        "location": "Лондон",
-        "salary": "3700-4100£",
-        "description": """🔹 *Требуются СОТРУДНИКИ НА ЗАВОД* 🔹
-        
-🏢 *Компания:* Coca-Cola Europacific Partners
-🌍 *Локация:* Великобритания, Лондон
-💰 *Зарплата:* 3700-4100£/месяц
-
-📌 *Требования:*
-• Мужчины и женщины 18–55 лет
-• Ответственность, аккуратность
-• Базовый английский — желательно
-• Опыт на производстве — плюс
-
-📋 *Обязанности:*
-• Работа на линии розлива и упаковки
-• Контроль качества продукции
-• Упаковка паллет, маркировка
-• Поддержание чистоты рабочего места
-
-⏱ *График работы:*
-• Смены по 8–12 часов
-• 5–6 дней в неделю
-
-🏠 *Проживание:*
-• Предоставляется работодателем
-• 2–3 человека в комнате"""
-    },
-    {
-        "id": "vac_2",
-        "title": "Работники склада Amazon",
-        "location": "Манчестер",
-        "salary": "3800-4200£",
-        "description": """🔹 *Требуются РАБОТНИКИ СКЛАДА* 🔹
-        
-🏢 *Компания:* Amazon
-🌍 *Локация:* Великобритания, Манчестер
-💰 *Зарплата:* 3800-4200£/месяц
-
-📌 *Требования:*
-• Возраст 18–50 лет
-• Физическая выносливость
-• Базовый английский приветствуется
-
-📋 *Обязанности:*
-• Комплектация и упаковка заказов
-• Работа с системой сканирования
-• Погрузочно-разгрузочные работы
-
-⏱ *График работы:*
-• Смены по 9–11 часов
-• 5 дней в неделю
-
-🏠 *Проживание:*
-• Компенсация 50% стоимости жилья"""
-    },
-    # Добавьте остальные вакансии по аналогии
-    {
-        "id": "vac_3",
-        "title": "Операторы станков",
-        "location": "Бирмингем",
-        "salary": "3900-4300£",
-        "description": """🔹 *Требуются ОПЕРАТОРЫ СТАНКОВ* 🔹
-        
-🏢 *Компания:* MetalWorks Ltd
-🌍 *Локация:* Великобритания, Бирмингем
-💰 *Зарплата:* 3900-4300£/месяц
-
-📌 *Требования:*
-• Мужчины 20–45 лет
-• Опыт работы на станках приветствуется
-• Обучение на месте
-
-📋 *Обязанности:*
-• Работа на станках ЧПУ
-• Контроль качества продукции
-• Поддержание порядка на рабочем месте
-
-⏱ *График работы:*
-• Смены по 8–10 часов
-• 5–6 дней в неделю
-
-🏠 *Проживание:*
-• Предоставляется общежитие"""
-    }
-]
-
-# Генерация дополнительных вакансий
-for i in range(4, 31):
-    cities = ["Лондон", "Манчестер", "Бирмингем", "Ливерпуль", "Глазго", "Шеффилд"]
-    positions = ["фасовщики", "грузчики", "упаковщики", "операторы", "комплектовщики", "кладовщики"]
-    companies = ["Tesco", "Sainsbury's", "Asda", "Morrisons", "IKEA", "DHL"]
-    
-    city = random.choice(cities)
-    position = random.choice(positions)
-    company = random.choice(companies)
-    salary_min = random.randint(3700, 3900)
-    salary_max = salary_min + random.randint(200, 400)
-    hours = random.choice(["8-10", "9-11", "10-12"])
-    days = random.choice(["5", "5-6"])
-    
-    VACANCIES.append({
-        "id": f"vac_{i}",
-        "title": f"{position.capitalize()} для {company}",
-        "location": city,
-        "salary": f"{salary_min}-{salary_max}£",
-        "description": f"""🔹 *Требуются {position.upper()}* 🔹
-        
-🏢 *Компания:* {company}
-🌍 *Локация:* Великобритания, {city}
-💰 *Зарплата:* {salary_min}-{salary_max}£/месяц
-
-📌 *Требования:*
-• Возраст 18–50 лет
-• Физическая выносливость
-• Базовый английский приветствуется
-
-📋 *Обязанности:*
-• Работа на производстве/складе
-• Соблюдение техники безопасности
-• Выполнение рабочих задач
-
-⏱ *График работы:*
-• Смены по {hours} часов
-• {days} дней в неделю
-
-🏠 *Проживание:*
-• {random.choice(['Предоставляется работодателем', 'Компенсация 50%', 'Помощь в поиске жилья'])}"""
-    })
-
 def get_main_keyboard():
-    """Клавиатура главного меню"""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📄 Создать документ", callback_data="select_template")],
         [InlineKeyboardButton("📁 Мои сохранённые", callback_data="view_bookmarks")],
@@ -221,7 +79,6 @@ def get_main_keyboard():
     ])
 
 def get_action_keyboard():
-    """Клавиатура после генерации документа"""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("⭐ В закладки", callback_data="bookmark"),
@@ -234,7 +91,6 @@ def get_action_keyboard():
     ])
 
 async def cleanup_files(*files):
-    """Удаление временных файлов"""
     for file in files:
         if os.path.exists(file):
             try:
@@ -244,7 +100,6 @@ async def cleanup_files(*files):
                 logger.error(f"Ошибка удаления {file}: {e}")
 
 def replace_client_and_date(doc_path, client_name, date_str, template_key):
-    """Замена данных в шаблоне DOCX"""
     try:
         if not os.path.exists(doc_path):
             raise FileNotFoundError(f"Шаблон {doc_path} не найден")
@@ -252,25 +107,24 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         doc = docx.Document(doc_path)
         
         # Замена имени клиента
-        client_replaced = False
         for para in doc.paragraphs:
             if "Client:" in para.text:
-                if template_key == "small_world":
-                    para.text = f"Client: {client_name}"
-                else:
-                    para.text = para.text.replace("Client:", f"Client: {client_name}")
-                client_replaced = True
+                para.text = f"Client: {client_name}"
                 break
         
-        # Замена даты
-        date_replaced_count = 0
-        for para in doc.paragraphs[-4:]:
-            if ("Date:" in para.text or "DATE:" in para.text) and date_replaced_count < 2:
-                para.text = para.text.replace("Date:", f"Date: {date_str}")
-                para.text = para.text.replace("DATE:", f"Date: {date_str}")
-                date_replaced_count += 1
+        # Замена даты (учитывает Date:, DATE: и другие варианты)
+        for para in doc.paragraphs:
+            if any(marker in para.text for marker in ["Date:", "DATE:"]):
+                para.text = f"Date: {date_str}"
         
-        # Сохранение временного файла
+        # Добавление подписи для small_world
+        if template_key == "small_world":
+            # Добавляем подпись после даты
+            for para in doc.paragraphs:
+                if "Date:" in para.text:
+                    para.add_run().add_picture("signature.png", width=docx.shared.Cm(4))
+                    break
+        
         temp_path = f"temp_{uuid.uuid4()}.docx"
         doc.save(temp_path)
         return temp_path
@@ -280,7 +134,6 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         raise
 
 def convert_to_pdf(doc_path, client_name):
-    """Конвертация DOCX в PDF"""
     try:
         result = subprocess.run(
             [
@@ -314,8 +167,11 @@ def convert_to_pdf(doc_path, client_name):
         logger.error("Таймаут конвертации документа")
         raise
 
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🤖 Добро пожаловать в бота для генерации документов!")
+    return await main_menu(update, context)
+
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Главное меню"""
     text = "🏠 *Главное меню*\nВыберите действие:"
     if update.message:
         await update.message.reply_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
@@ -323,13 +179,7 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.callback_query.edit_message_text(text, reply_markup=get_main_keyboard(), parse_mode="Markdown")
     return MAIN_MENU
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик команды /start"""
-    await update.message.reply_text("🤖 Добро пожаловать в бота для генерации документов!")
-    return await main_menu(update, context)
-
 async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор шаблона"""
     query = update.callback_query
     await query.answer()
     
@@ -345,7 +195,6 @@ async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return SELECT_TEMPLATE
 
 async def handle_template_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора шаблона"""
     query = update.callback_query
     await query.answer()
     
@@ -354,12 +203,10 @@ async def handle_template_selection(update: Update, context: ContextTypes.DEFAUL
     return INPUT_NAME
 
 async def generate_document(update, context, new_date=None):
-    """Основная логика генерации документа"""
     client_name = update.message.text.strip()
     template_key = context.user_data["template_key"]
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
-    # Установка даты
     kyiv_tz = ZoneInfo("Europe/Kiev")
     date_str = new_date or datetime.now(kyiv_tz).strftime("%Y-%m-%d")
     context.user_data.update({
@@ -370,18 +217,14 @@ async def generate_document(update, context, new_date=None):
     try:
         await update.message.reply_text("⏳ Идет генерация документа...")
         
-        # Генерация и конвертация
         temp_doc = replace_client_and_date(template_path, client_name, date_str, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
-        # Отправка файла
         with open(pdf_path, "rb") as f:
             await update.message.reply_document(document=f, filename=f"{client_name}.pdf")
         
-        # Очистка
         await cleanup_files(temp_doc, pdf_path)
         
-        # Ответ с клавиатурой
         await update.message.reply_text(
             "✅ Документ готов! Выберите действие:",
             reply_markup=get_action_keyboard()
@@ -394,11 +237,9 @@ async def generate_document(update, context, new_date=None):
         return ConversationHandler.END
 
 async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка имени клиента"""
     return await generate_document(update, context)
 
 async def bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавление в закладки"""
     query = update.callback_query
     await query.answer()
     
@@ -424,14 +265,12 @@ async def bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return CHANGE_DATE
 
 async def change_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запрос новой даты"""
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("📆 Введите дату в формате ГГГГ-ММ-ДД:")
     return INPUT_NEW_DATE
 
 async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка новой даты"""
     try:
         parsed_date = parse(update.message.text.strip())
         new_date = parsed_date.strftime("%Y-%m-%d")
@@ -441,7 +280,6 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INPUT_NEW_DATE
 
 async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Просмотр закладок"""
     try:
         user_id = update.effective_user.id
         
@@ -454,11 +292,7 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bookmarks = cursor.fetchall()
         
         if not bookmarks:
-            if update.callback_query:
-                await update.callback_query.answer()
-                await update.callback_query.edit_message_text("📭 У вас нет сохранённых документов.")
-            else:
-                await update.message.reply_text("📭 У вас нет сохранённых документов.")
+            await update.callback_query.edit_message_text("📭 У вас нет сохранённых документов.")
             return await main_menu(update, context)
         
         keyboard = [
@@ -469,34 +303,61 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
         
-        if update.callback_query:
-            await update.callback_query.answer()
-            await update.callback_query.edit_message_text(
-                "📚 Ваши сохранённые документы:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-        else:
-            await update.message.reply_text(
-                "📚 Ваши сохранённые документы:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
+        await update.callback_query.edit_message_text(
+            "📚 Ваши сохранённые документы:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
         return VIEW_BOOKMARKS
     
     except Exception as e:
         logger.error(f"Ошибка при просмотре закладок: {e}")
-        if update.callback_query:
-            await update.callback_query.answer("❌ Произошла ошибка!", show_alert=True)
-        else:
-            await update.message.reply_text("❌ Произошла ошибка при загрузке закладок!")
+        await update.callback_query.answer("❌ Произошла ошибка!", show_alert=True)
         return await main_menu(update, context)
-        
-        keyboard = [
-            [InlineKeyboardButton(
-                f"📌 {client} ({template}, {date})",
-                callback_data=f"bookmark_{client}_{template}_{date}"
-            )] for client, template, date in bookmarks
-        ]
-        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
-        
-        if update.callback_query:
-            await update.callback_query.answer
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Операция отменена.")
+    return await main_menu(update, context)
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Ошибка: {context.error}")
+    if update and update.callback_query:
+        await update.callback_query.answer("❌ Произошла ошибка!", show_alert=True)
+    return ConversationHandler.END
+
+def main():
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            MAIN_MENU: [
+                CallbackQueryHandler(select_template, pattern="^select_template$"),
+                CallbackQueryHandler(view_bookmarks, pattern="^view_bookmarks$"),
+            ],
+            SELECT_TEMPLATE: [
+                CallbackQueryHandler(handle_template_selection, pattern="^(ur_recruitment|small_world|imperative)$")
+            ],
+            INPUT_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name)
+            ],
+            CHANGE_DATE: [
+                CallbackQueryHandler(bookmark, pattern="^bookmark$"),
+                CallbackQueryHandler(change_date, pattern="^change_date$"),
+                CallbackQueryHandler(select_template, pattern="^select_template$"),
+                CallbackQueryHandler(main_menu, pattern="^main_menu$"),
+            ],
+            INPUT_NEW_DATE: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)
+            ],
+            VIEW_BOOKMARKS: [
+                CallbackQueryHandler(main_menu, pattern="^main_menu$")
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    application.add_handler(conv_handler)
+    application.add_error_handler(error_handler)
+    
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
