@@ -61,49 +61,56 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         for para in doc.paragraphs:
             if "Client:" in para.text:
                 if template_key == "small_world":
-                    # Очистка строки перед "Client:" для Small World
                     para.text = f"Client: {client_name}"
                 else:
                     para.text = para.text.replace("Client:", f"Client: {client_name}")
                 client_replaced = True
                 break
-        if not client_replaced:
-            logger.warning(f"Поле 'Client:' не найдено в {doc_path}")
         
-        # Замена Date (дважды на последней странице)
-        date_replaced_count = 0
-        last_page_paragraphs = []
-        current_page = []
-        
-        # Собираем абзацы, предполагая, что последняя страница — это последние абзацы
-        for para in doc.paragraphs:
-            current_page.append(para)
-        last_page_paragraphs = current_page
-        
-        # Ищем "Date:" или "DATE:" в последних абзацах и заменяем дважды
-        for para in last_page_paragraphs:
-            if ("Date:" in para.text or "DATE:" in para.text) and date_replaced_count < 2:
-                para.text = para.text.replace("Date:", f"Date: {date_str}")
-                para.text = para.text.replace("DATE:", f"Date: {date_str}")
-                date_replaced_count += 1
+        # Для Small World добавляем подпись
+        if template_key == "small_world":
+            # Ищем последний абзац с Date (обычно в конце документа)
+            date_paragraph = None
+            for para in reversed(doc.paragraphs):
+                if "Date:" in para.text or "DATE:" in para.text:
+                    date_paragraph = para
+                    break
+            
+            if date_paragraph:
+                # Очищаем форматирование и добавляем дату
+                date_paragraph.clear()
+                run = date_paragraph.add_run(f"Date: {date_str}")
                 
-                # Добавляем подпись только для шаблона Small World
-                if template_key == "small_world" and date_replaced_count == 1:
-                    # Добавляем пробел после даты
-                    para.add_run("  ")
-                    # Добавляем подпись
-                    if os.path.exists("signature.png"):
-                        para.add_run().add_picture("signature.png", width=docx.shared.Cm(4))
-                    else:
-                        logger.warning("Файл подписи signature.png не найден")
+                # Добавляем подпись справа от даты
+                if os.path.exists("signature.png"):
+                    try:
+                        # Добавляем табуляцию для выравнивания
+                        date_paragraph.add_run("\t")
+                        # Добавляем подпись с фиксированной шириной
+                        date_paragraph.add_run().add_picture(
+                            "signature.png", 
+                            width=docx.shared.Cm(4),  # Ширина 4 см
+                            height=docx.shared.Cm(1.5)  # Высота 1.5 см (сохраняет пропорции)
+                        )
+                    except Exception as e:
+                        logger.error(f"Ошибка при добавлении подписи: {e}")
+                else:
+                    logger.warning("Файл подписи signature.png не найден")
+            else:
+                logger.warning("Не найден абзац с Date для добавления подписи")
         
-        if date_replaced_count != 2:
-            logger.warning(f"Ожидалось 2 замены даты, выполнено {date_replaced_count} в {doc_path}")
+        # Для других шаблонов обычная замена даты
+        else:
+            date_replaced_count = 0
+            for para in doc.paragraphs:
+                if ("Date:" in para.text or "DATE:" in para.text) and date_replaced_count < 2:
+                    para.text = para.text.replace("Date:", f"Date: {date_str}")
+                    para.text = para.text.replace("DATE:", f"Date: {date_str}")
+                    date_replaced_count += 1
         
         # Сохранение измененного документа
         temp_path = f"temp_{uuid.uuid4()}.docx"
         doc.save(temp_path)
-        logger.info(f"Создан временный файл: {temp_path}")
         return temp_path
     except Exception as e:
         logger.error(f"Ошибка при обработке документа {doc_path}: {e}")
