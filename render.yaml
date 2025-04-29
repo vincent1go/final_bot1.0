@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: pdf-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        fromGroup: false
+        value: 7677140739:AAGJcf8uhIKVdY44jqDKKlRM84_4_ndlrps
+      - key: WEBHOOK_URL
+        fromGroup: false
+        value: https://final-bot1-0-3.onrender.com
+      - key: RENDER
+        fromGroup: false
+        value: true
