@@ -108,7 +108,7 @@ async def generate_document(update, context, new_date=None):
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("⭐ В закладки", callback_data="bookmark")],
             [InlineKeyboardButton("🏠 Меню", callback_data="main_menu")]
-        )
+        ])  # Здесь была ошибка - не хватало закрывающей квадратной скобки
     )
     return CHANGE_DATE
 
