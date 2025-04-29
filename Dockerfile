@@ -6,9 +6,9 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
+RUN pip install --no-cache-dir -r requirements.txt
 
+EXPOSE 10000
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["python", "main.py"]  # Убедитесь что main.py - правильное имя файла
+CMD ["python", "main.py"]
