@@ -1,4 +1,4 @@
-import os
+7677140739:AAGJcf8uhIKVdY44jqDKKlRM84_4_ndlrpsimport os
 import uuid
 import subprocess
 from datetime import datetime
@@ -478,7 +478,7 @@ def main():
     try:
         application = (
             Application.builder()
-            .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
+            .token("7677140739:AAGJcf8uhIKVdY44jqDKKlRM84_4_ndlrps")
             .build()
         )
         
