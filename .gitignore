@@ -1,4 +1,6 @@
-.env
-temp/
 __pycache__/
 *.pyc
+*.pdf
+*.docx
+bookmarks.db
+.env
