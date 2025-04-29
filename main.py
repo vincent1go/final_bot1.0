@@ -478,7 +478,7 @@ def main():
     try:
         application = (
             Application.builder()
-            .token("7677140739:AAF52PAthOfODXrHxcjxlar7bTdL86BEYOE")
+            .token("7677140739:AAGINNKHHEv2R2fZ34HPRfec_rR8Kmt6vI4")
             .build()
         )
         
