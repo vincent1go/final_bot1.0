@@ -6,7 +6,6 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
-import random
 
 import docx
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -67,12 +66,10 @@ def get_main_keyboard():
 def replace_client_and_date(doc_path, client_name, date_str, template_key):
     doc = docx.Document(doc_path)
     
-    # Замена имени
     for para in doc.paragraphs:
         if "Client:" in para.text or "CLIENT:" in para.text:
             para.text = f"Client: {client_name}"
     
-    # Замена даты (все варианты)
     for para in doc.paragraphs:
         if any(marker in para.text for marker in ["Date:", "DATE:"]):
             para.text = f"Date: {date_str}"
@@ -108,25 +105,99 @@ async def generate_document(update, context, new_date=None):
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("⭐ В закладки", callback_data="bookmark")],
             [InlineKeyboardButton("🏠 Меню", callback_data="main_menu")]
-        ])  # Здесь была ошибка - не хватало закрывающей квадратной скобки
+        ])
     )
     return CHANGE_DATE
 
-# Остальные обработчики остаются без изменений (как в вашем исходном коде)
-# ...
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Привет! Я бот для генерации документов.",
+        reply_markup=get_main_keyboard()
+    )
+    return MAIN_MENU
 
-if __name__ == "__main__":
-    # Webhook для Render
+async def select_template(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton("Юридический", callback_data="ur_recruitment")],
+        [InlineKeyboardButton("Small World", callback_data="small_world")],
+        [InlineKeyboardButton("Императив", callback_data="imperative")],
+        [InlineKeyboardButton("Назад", callback_data="main_menu")]
+    ]
+    
+    await query.edit_message_text(
+        "📝 Выберите шаблон:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return SELECT_TEMPLATE
+
+async def input_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    template_key = query.data
+    context.user_data["template_key"] = template_key
+    
+    await query.edit_message_text("📝 Введите имя клиента:")
+    return INPUT_NAME
+
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "Главное меню:",
+        reply_markup=get_main_keyboard()
+    )
+    return MAIN_MENU
+
+# Добавьте остальные обработчики по аналогии
+
+def main():
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("start", start)],
+        states={
+            MAIN_MENU: [
+                CallbackQueryHandler(select_template, pattern="^select_template$"),
+                CallbackQueryHandler(view_bookmarks, pattern="^view_bookmarks$"),
+            ],
+            SELECT_TEMPLATE: [
+                CallbackQueryHandler(input_name, pattern="^(ur_recruitment|small_world|imperative)$"),
+                CallbackQueryHandler(main_menu, pattern="^main_menu$"),
+            ],
+            INPUT_NAME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, generate_document),
+            ],
+        },
+        fallbacks=[CommandHandler("start", start)],
+    )
+    
+    application.add_handler(conv_handler)
+    
     if os.getenv("RENDER"):
+        # Настройка вебхука для Render
+        async def webhook(request):
+            if request.method == "POST":
+                update = Update.de_json(await request.json(), application.bot)
+                await application.process_update(update)
+                return web.Response()
+            return web.Response(status=403)
+        
+        async def setup_webhook():
+            url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
+            await application.bot.set_webhook(url)
+        
         from aiohttp import web
-        
-        async def handle(request):
-            return web.Response(text="Bot is running")
-        
         app = web.Application()
-        app.add_routes([web.get('/', handle)])
+        app.add_routes([web.post(f"/{BOT_TOKEN}", webhook)])
         
         port = int(os.getenv("PORT", 10000))
-        web.run_app(app, port=port)
+        web.run_app(app, port=port, handle_signals=True)
     else:
+        # Локальный запуск с поллингом
         application.run_polling()
+
+if __name__ == "__main__":
+    main()
