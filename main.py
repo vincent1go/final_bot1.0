@@ -425,7 +425,14 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Настройка обработчиков
 conv_handler = ConversationHandler(
-    entry_points=[CommandHandler("start", start)],
+    entry_points=[
+        CommandHandler("start", start),
+        CommandHandler("menu", main_menu),
+        CommandHandler("templates", select_template),
+        CommandHandler("bookmarks", view_bookmarks),
+        CommandHandler("vacancies", view_vacancies),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu)
+    ],
     states={
         MAIN_MENU: [
             CallbackQueryHandler(select_template, pattern="^select_template$"),
@@ -441,22 +448,27 @@ conv_handler = ConversationHandler(
             CallbackQueryHandler(bookmark, pattern="^bookmark$"),
             CallbackQueryHandler(change_date, pattern="^change_date$"),
             CallbackQueryHandler(select_template, pattern="^select_template$"),
-            CallbackQueryHandler(main_menu, pattern="^main_menu$")
+            CallbackQueryHandler(main_menu, pattern="^main_menu$"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, receive_name),
         ],
         INPUT_NEW_DATE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_new_date)],
         VIEW_BOOKMARKS: [
-            CallbackQueryHandler(main_menu, pattern="^main_menu$")
+            CallbackQueryHandler(main_menu, pattern="^main_menu$"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu)
         ],
         VIEW_VACANCIES: [
             CallbackQueryHandler(view_vacancy_details, pattern="^vacancy_"),
-            CallbackQueryHandler(main_menu, pattern="^main_menu$")
+            CallbackQueryHandler(main_menu, pattern="^main_menu$"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu)
         ],
         VIEW_VACANCY_DETAILS: [
             CallbackQueryHandler(view_vacancies, pattern="^view_vacancies$"),
-            CallbackQueryHandler(main_menu, pattern="^main_menu$")
+            CallbackQueryHandler(main_menu, pattern="^main_menu$"),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, main_menu)
         ]
     },
-    fallbacks=[CommandHandler("cancel", cancel)]
+    fallbacks=[CommandHandler("cancel", cancel)],
+    per_message=True
 )
 
 application.add_handler(conv_handler)
@@ -472,8 +484,16 @@ async def webhook_handler(request):
         logger.error(f"Ошибка вебхука: {e}")
         return web.Response(status=500)
 
+async def set_webhook():
+    webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/webhook"
+    await application.bot.set_webhook(webhook_url)
+
 async def run_server():
-    """Запуск сервера"""
+    """Запуск сервера с правильной инициализацией"""
+    await application.initialize()
+    await application.start()
+    await set_webhook()
+    
     app = web.Application()
     app.router.add_post("/webhook", webhook_handler)
     app.router.add_get("/ping", lambda _: web.Response(text="OK"))
@@ -483,13 +503,12 @@ async def run_server():
     
     port = int(os.getenv("PORT", 10000))
     site = web.TCPSite(runner, "0.0.0.0", port)
-    
-    await application.initialize()
-    await application.start()
     await site.start()
     
     logger.info(f"🚀 Сервер запущен на порту {port}")
-    
+    logger.info(f"🤖 Webhook установлен: {await application.bot.get_webhook_info()}")
+
+    # Бесконечный цикл
     while True:
         await asyncio.sleep(3600)
 
