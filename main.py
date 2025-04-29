@@ -282,7 +282,7 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
 def convert_to_pdf(doc_path, client_name):
     """Конвертация DOCX в PDF"""
     try:
-        subprocess.run(
+        result = subprocess.run(
             [
                 "libreoffice",
                 "--headless",
@@ -294,7 +294,9 @@ def convert_to_pdf(doc_path, client_name):
                 doc_path
             ],
             check=True,
-            timeout=60
+            timeout=60,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
         )
         
         temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
@@ -306,7 +308,10 @@ def convert_to_pdf(doc_path, client_name):
         raise FileNotFoundError("PDF не создан")
     
     except subprocess.CalledProcessError as e:
-        logger.error(f"Ошибка конвертации: {e}")
+        logger.error(f"Ошибка конвертации: {e.stderr.decode()}")
+        raise
+    except subprocess.TimeoutExpired:
+        logger.error("Таймаут конвертации документа")
         raise
 
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -455,6 +460,35 @@ async def view_bookmarks(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("📭 У вас нет сохранённых документов.")
             return await main_menu(update, context)
+        
+        keyboard = [
+            [InlineKeyboardButton(
+                f"📌 {client} ({template}, {date})",
+                callback_data=f"bookmark_{client}_{template}_{date}"
+            )] for client, template, date in bookmarks
+        ]
+        keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main_menu")])
+        
+        if update.callback_query:
+            await update.callback_query.answer()
+            await update.callback_query.edit_message_text(
+                "📚 Ваши сохранённые документы:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            await update.message.reply_text(
+                "📚 Ваши сохранённые документы:",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        return VIEW_BOOKMARKS
+    
+    except Exception as e:
+        logger.error(f"Ошибка при просмотре закладок: {e}")
+        if update.callback_query:
+            await update.callback_query.answer("❌ Произошла ошибка!", show_alert=True)
+        else:
+            await update.message.reply_text("❌ Произошла ошибка при загрузке закладок!")
+        return await main_menu(update, context)
         
         keyboard = [
             [InlineKeyboardButton(
