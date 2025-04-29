@@ -18,6 +18,10 @@ from telegram.ext import (
 import sqlite3
 import logging
 from dateutil.parser import parse
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(
@@ -69,7 +73,7 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
         
         # Для Small World добавляем подпись
         if template_key == "small_world":
-            # Ищем последний абзац с Date (обычно в конце документа)
+            # Ищем последний абзац с Date
             date_paragraph = None
             for para in reversed(doc.paragraphs):
                 if "Date:" in para.text or "DATE:" in para.text:
@@ -81,21 +85,25 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
                 date_paragraph.clear()
                 run = date_paragraph.add_run(f"Date: {date_str}")
                 
-                # Добавляем подпись справа от даты
-                if os.path.exists("signature.png"):
+                # Путь к файлу подписи
+                signature_path = os.path.join(os.path.dirname(__file__), "signature.png")
+                logger.info(f"Проверка пути к подписи: {signature_path}")
+                
+                if os.path.exists(signature_path):
                     try:
                         # Добавляем табуляцию для выравнивания
                         date_paragraph.add_run("\t")
                         # Добавляем подпись с фиксированной шириной
                         date_paragraph.add_run().add_picture(
-                            "signature.png", 
+                            signature_path,
                             width=docx.shared.Cm(4),  # Ширина 4 см
-                            height=docx.shared.Cm(1.5)  # Высота 1.5 см (сохраняет пропорции)
+                            height=docx.shared.Cm(1.5)  # Высота 1.5 см
                         )
+                        logger.info("Подпись успешно добавлена")
                     except Exception as e:
                         logger.error(f"Ошибка при добавлении подписи: {e}")
                 else:
-                    logger.warning("Файл подписи signature.png не найден")
+                    logger.error(f"Файл подписи не найден по пути: {signature_path}")
             else:
                 logger.warning("Не найден абзац с Date для добавления подписи")
         
@@ -122,23 +130,21 @@ def convert_to_pdf(doc_path, client_name):
         if not os.path.exists(doc_path):
             raise FileNotFoundError(f"Временный файл {doc_path} не найден")
         
-        # Вызов libreoffice для конвертации с ускорением
         logger.info(f"Запуск конвертации {doc_path} в PDF")
         subprocess.run(
             [
                 "libreoffice",
                 "--headless",
-                "--nofirststartwizard",  # Ускорение запуска LibreOffice
+                "--nofirststartwizard",
                 "--convert-to",
                 "pdf",
                 "--outdir",
-                os.path.dirname(doc_path) or ".",  # Убедимся, что outdir не пустой
+                os.path.dirname(doc_path) or ".",
                 doc_path
             ],
             check=True,
-            timeout=60  # Увеличенный таймаут
+            timeout=60
         )
-        # Переименование файла
         temp_pdf = os.path.splitext(doc_path)[0] + ".pdf"
         if not os.path.exists(temp_pdf):
             raise FileNotFoundError(f"PDF-файл {temp_pdf} не создан")
@@ -190,29 +196,23 @@ async def receive_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     template_key = context.user_data["template_key"]
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
-    # Получение текущей даты в Киеве
     kyiv_tz = ZoneInfo("Europe/Kiev")
     current_date = datetime.now(kyiv_tz).strftime("%Y-%m-%d")
     context.user_data["date"] = current_date
     
     try:
-        # Сообщение о начале генерации
         await update.message.reply_text("Ожидайте, ваш документ генерируется...")
         
-        # Обработка документа
         temp_doc = replace_client_and_date(template_path, client_name, current_date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
-        # Отправка PDF
         with open(pdf_path, "rb") as f:
             await update.message.reply_document(document=f, filename=f"{client_name}.pdf")
         
-        # Очистка временных файлов
         os.remove(temp_doc)
         os.remove(pdf_path)
         logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
         
-        # Предложение добавить в закладки, изменить дату или сгенерировать новый документ
         keyboard = [
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
@@ -268,7 +268,6 @@ async def change_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_date_input = update.message.text.strip()
     try:
-        # Парсинг даты в любом формате
         parsed_date = parse(new_date_input)
         new_date = parsed_date.strftime("%Y-%m-%d")
     except ValueError:
@@ -281,23 +280,18 @@ async def receive_new_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
     try:
-        # Сообщение о начале генерации
         await update.message.reply_text("Ожидайте, ваш документ генерируется...")
         
-        # Обработка документа с новой датой
         temp_doc = replace_client_and_date(template_path, client_name, new_date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
-        # Отправка PDF
         with open(pdf_path, "rb") as f:
             await update.message.reply_document(document=f, filename=f"{client_name}.pdf")
         
-        # Очистка временных файлов
         os.remove(temp_doc)
         os.remove(pdf_path)
         logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
         
-        # Предложение вариантов
         keyboard = [
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату снова", callback_data="change_date")],
@@ -334,23 +328,18 @@ async def receive_another_name(update: Update, context: ContextTypes.DEFAULT_TYP
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
     try:
-        # Сообщение о начале генерации
         await update.message.reply_text("Ожидайте, ваш документ генерируется...")
         
-        # Обработка документа
         temp_doc = replace_client_and_date(template_path, client_name, date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
-        # Отправка PDF
         with open(pdf_path, "rb") as f:
             await update.message.reply_document(document=f, filename=f"{client_name}.pdf")
         
-        # Очистка временных файлов
         os.remove(temp_doc)
         os.remove(pdf_path)
         logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
         
-        # Предложение вариантов
         keyboard = [
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
@@ -438,23 +427,18 @@ async def regenerate_bookmark(update: Update, context: ContextTypes.DEFAULT_TYPE
     template_path = os.path.join("templates", TEMPLATES[template_key])
     
     try:
-        # Сообщение о начале генерации
         await query.message.reply_text("Ожидайте, ваш документ генерируется...")
         
-        # Обработка документа
         temp_doc = replace_client_and_date(template_path, client_name, date, template_key)
         pdf_path = convert_to_pdf(temp_doc, client_name)
         
-        # Отправка PDF
         with open(pdf_path, "rb") as f:
             await query.message.reply_document(document=f, filename=f"{client_name}.pdf")
         
-        # Очистка временных файлов
         os.remove(temp_doc)
         os.remove(pdf_path)
         logger.info(f"Временные файлы удалены: {temp_doc}, {pdf_path}")
         
-        # Предложение вариантов
         keyboard = [
             [InlineKeyboardButton("Добавить в закладки", callback_data="bookmark")],
             [InlineKeyboardButton("Изменить дату", callback_data="change_date")],
@@ -496,7 +480,7 @@ def main():
     try:
         application = (
             Application.builder()
-            .token("7677140739:AAGINNKHHEv2R2fZ34HPRfec_rR8Kmt6vI4")
+            .token(os.getenv("TELEGRAM_TOKEN"))
             .build()
         )
         
@@ -521,12 +505,10 @@ def main():
         application.add_handler(conv_handler)
         application.add_error_handler(error_handler)
         
-        # Проверка директории templates
         if not os.path.exists("templates"):
             logger.error("Директория templates не найдена")
             raise FileNotFoundError("Директория templates не найдена")
         
-        # Запуск бота с вебхуком
         logger.info("Запуск приложения с вебхуком")
         application.run_webhook(
             listen="0.0.0.0",
