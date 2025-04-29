@@ -86,6 +86,17 @@ def replace_client_and_date(doc_path, client_name, date_str, template_key):
                 para.text = para.text.replace("Date:", f"Date: {date_str}")
                 para.text = para.text.replace("DATE:", f"Date: {date_str}")
                 date_replaced_count += 1
+                
+                # Добавляем подпись только для шаблона Small World
+                if template_key == "small_world" and date_replaced_count == 1:
+                    # Добавляем пробел после даты
+                    para.add_run("  ")
+                    # Добавляем подпись
+                    if os.path.exists("signature.png"):
+                        para.add_run().add_picture("signature.png", width=docx.shared.Cm(4))
+                    else:
+                        logger.warning("Файл подписи signature.png не найден")
+        
         if date_replaced_count != 2:
             logger.warning(f"Ожидалось 2 замены даты, выполнено {date_replaced_count} в {doc_path}")
         
