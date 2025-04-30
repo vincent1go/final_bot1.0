@@ -1,4 +1,4 @@
-7677140739:AAGJcf8uhIKVdY44jqDKKlRM84_4_ndlrpsimport os
+import os
 import uuid
 import subprocess
 from datetime import datetime
