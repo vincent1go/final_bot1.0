@@ -1,150 +1,156 @@
 import os
-import pytz
+import logging
+from aiogram import Bot, Dispatcher, types, executor
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from datetime import datetime
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.dispatcher import FSMContext
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+import pytz
+from pdfrw import PdfReader, PdfWriter
 
-from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
+logging.basicConfig(level=logging.INFO)
 
-import io
-
-# Токен бота из переменной окружения
-API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+API_TOKEN = os.getenv('BOT_TOKEN')
 if not API_TOKEN:
-    raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is not set!")
+    raise RuntimeError("BOT_TOKEN не найден в переменных окружения")
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot, storage=MemoryStorage())
-dp.middleware.setup(LoggingMiddleware())
+dp = Dispatcher(bot)
 
-# Путь к шаблону PDF (должен быть в проекте рядом с ботом)
-TEMPLATE_PATH = "template.pdf"
+# Путь к шаблону PDF (загрузите на Render рядом с ботом)
+PDF_TEMPLATE_PATH = 'template.pdf'
 
-# Состояния для FSM
-class Form(StatesGroup):
-    waiting_for_client_name = State()
-    waiting_for_date = State()
+# Ключи состояний для хранения данных между сообщениями
+USER_DATA = {}
 
-def get_kiev_time():
-    tz = pytz.timezone("Europe/Kiev")
-    return datetime.now(tz)
+# Функция для замены текста в PDF контенте страницы (очень упрощенный пример)
+def replace_text_in_pdf(input_path, output_path, client_name, date_str):
+    pdf = PdfReader(input_path)
+    # Первая страница - меняем Client:
+    page1 = pdf.pages[0]
+    content1 = page1.Contents.stream
+    # Заменим "Client:" на "Client: {client_name}"
+    # Предположим, что в шаблоне "Client:" в точности так написано
+    content1 = content1.replace(b'Client:', f'Client: {client_name}'.encode('utf-8'))
+    page1.Contents.stream = content1
 
-def create_overlay(client_name: str, date_str: str):
-    """Создает PDF с измененными текстами client_name и date_str в нужных позициях"""
-    packet = io.BytesIO()
-    can = canvas.Canvas(packet, pagesize=letter)
+    # Пятая страница (индекс 4) - меняем два раза дату
+    page5 = pdf.pages[4]
+    content5 = page5.Contents.stream
+    # Заменяем все вхождения "Date: 20.05.2025" на "Date: {date_str}"
+    content5 = content5.replace(b'Date: 20.05.2025', f'Date: {date_str}'.encode('utf-8'))
+    page5.Contents.stream = content5
 
-    # Координаты и шрифты нужно подстроить под твой шаблон, пример:
-    # Поле Client: примерно в левом верхнем углу
-    can.setFont("Helvetica-Bold", 12)
-    can.drawString(70, 720, f"Client: {client_name}")
+    PdfWriter(output_path, trailer=pdf).write()
 
-    # Поле Date: примерно справа сверху
-    can.setFont("Helvetica", 12)
-    can.drawString(400, 720, f"Date: {date_str}")
-
-    can.save()
-    packet.seek(0)
-    return PdfReader(packet)
-
-def merge_pdfs(template_path, overlay_pdf):
-    template_pdf = PdfReader(template_path)
-    for page_num in range(len(template_pdf.pages)):
-        overlay_page = overlay_pdf.pages[0]  # накладываем один оверлей на все страницы, если нужно
-        template_page = template_pdf.pages[page_num]
-        if "/Contents" in template_page:
-            contents = template_page.Contents
-            if isinstance(contents, list):
-                contents.append(overlay_page.Contents)
-            else:
-                template_page.Contents = [contents, overlay_page.Contents]
-        else:
-            template_page.Contents = overlay_page.Contents
-    output_stream = io.BytesIO()
-    PdfWriter(output_stream, trailer=template_pdf).write()
-    output_stream.seek(0)
-    return output_stream
-
+# Хэндлер /start
 @dp.message_handler(commands=['start'])
-async def cmd_start(message: types.Message):
-    await message.answer("Привет! Введи имя клиента, чтобы получить готовый PDF.")
-    await Form.waiting_for_client_name.set()
+async def start_handler(message: types.Message):
+    await message.answer(
+        "Привет! Введите имя клиента, чтобы получить PDF с заполненным шаблоном."
+    )
 
-@dp.message_handler(state=Form.waiting_for_client_name)
-async def process_client_name(message: types.Message, state: FSMContext):
+# Принимаем имя клиента
+@dp.message_handler(lambda message: message.text and message.text.strip() != '')
+async def client_name_handler(message: types.Message):
     client_name = message.text.strip()
-    if not client_name:
-        await message.answer("Имя клиента не может быть пустым. Попробуй еще раз.")
+    USER_DATA[message.from_user.id] = {'client_name': client_name}
+
+    # Получаем текущую дату по Киеву
+    tz = pytz.timezone('Europe/Kiev')
+    now = datetime.now(tz)
+    date_str = now.strftime('%d.%m.%Y')
+    USER_DATA[message.from_user.id]['date'] = date_str
+
+    # Спрашиваем пользователя, менять ли дату
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    keyboard.add(KeyboardButton('Использовать текущую дату'))
+    keyboard.add(KeyboardButton('Ввести дату вручную'))
+
+    await message.answer(
+        f"Имя клиента: {client_name}\n"
+        f"Дата по умолчанию: {date_str}\n"
+        f"Хотите использовать эту дату или ввести свою?",
+        reply_markup=keyboard
+    )
+
+# Обработка ответа на выбор даты
+@dp.message_handler(lambda message: message.text in ['Использовать текущую дату', 'Ввести дату вручную'])
+async def date_choice_handler(message: types.Message):
+    if message.text == 'Использовать текущую дату':
+        user_id = message.from_user.id
+        data = USER_DATA.get(user_id)
+        if not data:
+            await message.answer("Сначала введите имя клиента /start")
+            return
+
+        # Генерируем и отправляем PDF
+        await generate_and_send_pdf(message, data['client_name'], data['date'])
+        await message.answer("Готово! Введите имя следующего клиента.", reply_markup=ReplyKeyboardRemove())
+        USER_DATA.pop(user_id, None)
+
+    else:
+        # Запрашиваем дату в формате ДД.ММ.ГГГГ
+        await message.answer("Введите дату в формате ДД.ММ.ГГГГ (например, 20.05.2025):")
+
+        # Помечаем, что сейчас ждем дату
+        USER_DATA[message.from_user.id]['await_date'] = True
+
+# Принимаем дату от пользователя
+@dp.message_handler(lambda message: True)
+async def date_input_handler(message: types.Message):
+    user_id = message.from_user.id
+    data = USER_DATA.get(user_id)
+    if data and data.get('await_date'):
+        date_text = message.text.strip()
+
+        # Проверяем формат даты
+        try:
+            datetime.strptime(date_text, '%d.%m.%Y')
+        except ValueError:
+            await message.answer("Неверный формат даты. Попробуйте снова в формате ДД.ММ.ГГГГ:")
+            return
+
+        # Сохраняем дату и удаляем ожидание
+        data['date'] = date_text
+        data.pop('await_date')
+
+        # Генерируем и отправляем PDF
+        await generate_and_send_pdf(message, data['client_name'], data['date'])
+        await message.answer("Готово! Введите имя следующего клиента.", reply_markup=ReplyKeyboardRemove())
+        USER_DATA.pop(user_id, None)
         return
 
-    # Сохраняем имя клиента
-    await state.update_data(client_name=client_name)
+    # Если не ждем дату, значит пользователь вводит новое имя клиента
+    client_name = message.text.strip()
+    USER_DATA[user_id] = {'client_name': client_name}
 
-    # Получаем текущее время по Киеву
-    date_str = get_kiev_time().strftime("%d.%m.%Y")
+    # Получаем текущую дату по Киеву
+    tz = pytz.timezone('Europe/Kiev')
+    now = datetime.now(tz)
+    date_str = now.strftime('%d.%m.%Y')
+    USER_DATA[user_id]['date'] = date_str
 
-    # Создаем PDF с заменами
+    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
+    keyboard.add(KeyboardButton('Использовать текущую дату'))
+    keyboard.add(KeyboardButton('Ввести дату вручную'))
+
+    await message.answer(
+        f"Имя клиента: {client_name}\n"
+        f"Дата по умолчанию: {date_str}\n"
+        f"Хотите использовать эту дату или ввести свою?",
+        reply_markup=keyboard
+    )
+
+async def generate_and_send_pdf(message, client_name, date_str):
+    user_id = message.from_user.id
+    out_path = f'temp_{user_id}.pdf'
     try:
-        overlay_pdf = create_overlay(client_name, date_str)
-        pdf_file = merge_pdfs(TEMPLATE_PATH, overlay_pdf)
+        replace_text_in_pdf(PDF_TEMPLATE_PATH, out_path, client_name, date_str)
+        # Отправляем файл
+        with open(out_path, 'rb') as f:
+            await message.answer_document(f, caption=f"PDF для клиента: {client_name}\nДата: {date_str}")
     except Exception as e:
-        await message.answer(f"Ошибка при создании PDF: {e}")
-        await state.finish()
-        return
-
-    await message.answer_document(types.InputFile(pdf_file, filename=f"{client_name}.pdf"), caption=f"Вот PDF для клиента {client_name} с датой {date_str}.")
-
-    await message.answer("Если хочешь указать другую дату, введи ее в формате ДД.ММ.ГГГГ, или отправь /skip чтобы оставить текущую.")
-    await Form.waiting_for_date.set()
-
-@dp.message_handler(commands=['skip'], state=Form.waiting_for_date)
-async def skip_date(message: types.Message, state: FSMContext):
-    await message.answer("Хорошо, оставляем текущую дату.")
-    await state.finish()
-    await message.answer("Если хочешь создать еще один PDF, введи имя клиента.")
-
-@dp.message_handler(state=Form.waiting_for_date)
-async def process_date(message: types.Message, state: FSMContext):
-    date_input = message.text.strip()
-    try:
-        # Проверяем корректность формата даты
-        date_obj = datetime.strptime(date_input, "%d.%m.%Y")
-        date_str = date_obj.strftime("%d.%m.%Y")
-    except ValueError:
-        await message.answer("Неверный формат даты! Пожалуйста, введи дату в формате ДД.ММ.ГГГГ или отправь /skip.")
-        return
-
-    data = await state.get_data()
-    client_name = data.get("client_name")
-    if not client_name:
-        await message.answer("Произошла ошибка: имя клиента не найдено. Пожалуйста, начни заново командой /start.")
-        await state.finish()
-        return
-
-    try:
-        overlay_pdf = create_overlay(client_name, date_str)
-        pdf_file = merge_pdfs(TEMPLATE_PATH, overlay_pdf)
-    except Exception as e:
-        await message.answer(f"Ошибка при создании PDF: {e}")
-        await state.finish()
-        return
-
-    await message.answer_document(types.InputFile(pdf_file, filename=f"{client_name}.pdf"), caption=f"PDF для клиента {client_name} с новой датой {date_str}.")
-
-    await state.finish()
-    await message.answer("Если хочешь создать еще один PDF, введи имя клиента.")
-
-@dp.errors_handler()
-async def global_error_handler(update, exception):
-    print(f"Произошла ошибка: {exception}")
-    return True  # ошибка обработана, чтобы бот не крашился
+        logging.error(f"Ошибка при генерации PDF: {e}")
+        await message.answer("Произошла ошибка при генерации PDF. Попробуйте снова позже.")
 
 if __name__ == '__main__':
-    # Запуск бота
     executor.start_polling(dp, skip_updates=True)
