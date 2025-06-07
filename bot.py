@@ -13,11 +13,11 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 import fitz  # PyMuPDF
 
-from aiohttp import web  # <-- для /ping
+from aiohttp import web
 
 # -------- Конфигурация --------
 API_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # например: https://yourapp.onrender.com
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
 PORT = int(os.getenv("PORT", 8000))
@@ -46,18 +46,17 @@ class Form(StatesGroup):
 def replace_text_in_pdf(client_name: str, date_str: str) -> str:
     doc = fitz.open(TEMPLATE_PATH)
 
-    # --- Замена "Client:" на странице 1 ---
-    page1 = doc[0]
-    for inst in page1.search_for("Client:"):
-        page1.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
-        page1.insert_text(inst.tl, f"Client: {client_name}", fontsize=12, color=(0, 0, 0))
+    replacements = {
+        "Client:": f"Client: {client_name}",
+        "Date: 20.05.2025": f"Date: {date_str}",
+    }
 
-    # --- Замена даты на странице 5 ---
-    page5 = doc[4]
-    for inst in page5.search_for("Date: 20.05.2025"):
-        new_position = fitz.Point(inst.tl.x, inst.tl.y + 5)
-        page5.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
-        page5.insert_text(new_position, f"Date: {date_str}", fontsize=12, color=(0, 0, 0))
+    for page in doc:
+        for key, value in replacements.items():
+            instances = page.search_for(key)
+            for inst in instances:
+                page.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
+                page.insert_text(inst.tl, value, fontsize=12, color=(0, 0, 0))
 
     filename = f"{client_name}_{date_str.replace('.', '-')}.pdf"
     output_path = os.path.join(OUTPUT_DIR, filename)
@@ -144,7 +143,7 @@ async def on_shutdown(dp):
     logging.warning("Бот остановлен.")
 
 
-# -------- /ping для Uptime Robot --------
+# -------- /ping --------
 async def health_check(request):
     return web.Response(text="OK")
 
@@ -166,5 +165,5 @@ if __name__ == "__main__":
         skip_updates=True,
         host="0.0.0.0",
         port=PORT,
-        app=app  # 👈 важно!
+        app=app
     )
