@@ -7,173 +7,141 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import ParseMode
 from aiogram.utils.executor import start_webhook
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.dispatcher import FSMContext
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 import fitz  # PyMuPDF
 
-# -------- НАСТРОЙКИ --------
+# -------- Конфіг --------
 API_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # Например: https://yourapp.onrender.com
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # наприклад: https://yourapp.onrender.com
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
 PORT = int(os.getenv("PORT", 8000))
 
-# Путь к шаблону
 TEMPLATE_PATH = "template.pdf"
 OUTPUT_DIR = "generated"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Логирование
+# -------- Логування --------
 logging.basicConfig(level=logging.INFO)
 
+# -------- Ініціалізація бота --------
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
-dp.middleware.setup(LoggingMiddleware())
-
-# ---- Работа с состояниями (FSM) ----
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
+dp.middleware.setup(LoggingMiddleware())
 
 
+# -------- Стан машини --------
 class Form(StatesGroup):
     waiting_for_client_name = State()
     waiting_for_date = State()
 
 
-# ---- Функции для работы с PDF ----
+# -------- Генерація PDF --------
 def replace_text_in_pdf(client_name: str, date_str: str) -> str:
-    """
-    Заменить текст в PDF: 
-    - На 1 странице: 'Client:' -> 'Client: <client_name>'
-    - На 5 странице (две даты): 'Date: 20.05.2025' -> 'Date: <date_str>'
-    Возвращает путь к сгенерированному PDF.
-    """
-
     doc = fitz.open(TEMPLATE_PATH)
 
-    # 1 страница: меняем client
+    # --- Заміна "Client:" на сторінці 1 ---
     page1 = doc[0]
-    # Удаляем старый текст Client: (стираем прямоугольник, где он был)
-    # Т.к. координаты не даем, пробуем найти текст и очистить область вокруг него.
-
-    # Найдем все вхождения "Client:"
     for inst in page1.search_for("Client:"):
-        # Стираем прямоугольник (заливка белым)
         page1.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
-
-        # Пишем новый текст вместо Client: <client_name>
-        # Ставим текст в ту же позицию с тем же размером
         page1.insert_text(inst.tl, f"Client: {client_name}", fontsize=12, color=(0, 0, 0))
 
-    # 5 страница: меняем дату 2 раза
+    # --- Заміна дати на сторінці 5 ---
     page5 = doc[4]
-
     for inst in page5.search_for("Date: 20.05.2025"):
         page5.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
         page5.insert_text(inst.tl, f"Date: {date_str}", fontsize=12, color=(0, 0, 0))
 
-    # Сохраняем файл
-    output_pdf = os.path.join(OUTPUT_DIR, f"{client_name}_{date_str.replace('.', '-')}.pdf")
-    doc.save(output_pdf)
+    filename = f"{client_name}_{date_str.replace('.', '-')}.pdf"
+    output_path = os.path.join(OUTPUT_DIR, filename)
+    doc.save(output_path)
     doc.close()
 
-    return output_pdf
+    return output_path
 
 
-# ---- Хэндлеры ----
+# -------- Хендлери --------
 
-@dp.message_handler(commands=['start'])
+@dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message):
-    await message.answer(
-        "Привет! Я бот для генерации PDF.\n"
-        "Введите имя клиента:",
-        reply_markup=types.ForceReply(selective=True),
-    )
+    await message.answer("Привіт! Введіть ім’я клієнта:", reply_markup=types.ForceReply(selective=True))
     await Form.waiting_for_client_name.set()
 
 
 @dp.message_handler(state=Form.waiting_for_client_name, content_types=types.ContentTypes.TEXT)
-async def process_client_name(message: types.Message, state: FSMContext):
-    client_name = message.text.strip()
-    if not client_name:
-        await message.answer("Имя клиента не может быть пустым. Введите имя еще раз:")
+async def handle_client_name(message: types.Message, state: FSMContext):
+    name = message.text.strip()
+    if not name:
+        await message.answer("Ім’я не може бути порожнім. Введіть ще раз:")
         return
 
-    await state.update_data(client_name=client_name)
+    await state.update_data(client_name=name)
 
-    # Предлагаем ввести дату или использовать текущую по Киеву
-    tz = pytz.timezone("Europe/Kiev")
-    now_kiev = datetime.now(tz).strftime("%d.%m.%Y")
-
+    now = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%d.%m.%Y")
     await message.answer(
-        f"Введите дату в формате ДД.ММ.ГГГГ или отправьте /today, чтобы использовать текущую дату ({now_kiev}):",
+        f"Введіть дату у форматі ДД.ММ.РРРР або /today (сьогоднішня: {now}):",
         reply_markup=types.ForceReply(selective=True),
     )
     await Form.waiting_for_date.set()
 
 
 @dp.message_handler(state=Form.waiting_for_date, content_types=types.ContentTypes.TEXT)
-async def process_date(message: types.Message, state: FSMContext):
-    date_text = message.text.strip()
+async def handle_date(message: types.Message, state: FSMContext):
+    raw_date = message.text.strip()
+    if raw_date.lower() == "/today":
+        date_str = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%d.%m.%Y")
+    else:
+        try:
+            datetime.strptime(raw_date, "%d.%m.%Y")
+            date_str = raw_date
+        except ValueError:
+            await message.answer("Невірний формат дати. Введіть у форматі ДД.ММ.РРРР або /today:")
+            return
 
-    # Специальная команда /today для текущей даты
-    if date_text.lower() == "/today":
-        tz = pytz.timezone("Europe/Kiev")
-        date_text = datetime.now(tz).strftime("%d.%m.%Y")
+    data = await state.get_data()
+    client_name = data.get("client_name")
 
-    # Проверка формата даты
-    try:
-        datetime.strptime(date_text, "%d.%m.%Y")
-    except ValueError:
-        await message.answer("Неверный формат даты. Введите в формате ДД.ММ.ГГГГ или /today:")
-        return
-
-    user_data = await state.get_data()
-    client_name = user_data.get("client_name")
-
-    # Генерируем PDF
-    await message.answer("Генерирую PDF, подождите...")
+    await message.answer("Генерую PDF, зачекайте...")
 
     try:
-        output_pdf = replace_text_in_pdf(client_name, date_text)
+        pdf_path = replace_text_in_pdf(client_name, date_str)
     except Exception as e:
-        logging.error(f"Ошибка при генерации PDF: {e}")
-        await message.answer("Произошла ошибка при генерации PDF. Попробуйте позже.")
+        logging.error(f"Помилка при генерації PDF: {e}")
+        await message.answer("Сталася помилка при створенні PDF. Спробуйте пізніше.")
         await state.finish()
         return
 
-    # Отправляем файл
-    with open(output_pdf, "rb") as f:
-        await message.answer_document(f, caption=f"PDF для клиента {client_name}, дата {date_text}")
+    with open(pdf_path, "rb") as file:
+        await message.answer_document(file, caption=f"{client_name}, дата {date_str}")
 
-    await message.answer("Готово! Введите имя следующего клиента:")
-
+    await message.answer("Готово! Введіть ім’я наступного клієнта:")
     await Form.waiting_for_client_name.set()
 
 
 @dp.message_handler()
-async def fallback(message: types.Message):
-    await message.answer("Введите /start для начала работы с ботом.")
+async def handle_unknown(message: types.Message):
+    await message.answer("Натисніть /start для початку.")
 
 
-# --- Webhook settings для Render ---
-
+# -------- Webhook --------
 async def on_startup(dp):
     await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook установлен на {WEBHOOK_URL}")
+    logging.info(f"Webhook встановлено: {WEBHOOK_URL}")
+
 
 async def on_shutdown(dp):
-    logging.warning("Shutting down..")
+    logging.warning("Вимикаємося...")
     await bot.delete_webhook()
     await dp.storage.close()
     await dp.storage.wait_closed()
-    logging.warning("Shutdown complete.")
+    logging.warning("Бот вимкнено.")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     start_webhook(
         dispatcher=dp,
         webhook_path=WEBHOOK_PATH,
