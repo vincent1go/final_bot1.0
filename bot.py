@@ -14,7 +14,7 @@ from aiohttp import web
 
 # -------- Конфигурация --------
 API_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # например: https://yourapp.onrender.com
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # Например: https://yourapp.onrender.com
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
 PORT = int(os.getenv("PORT", 8000))
@@ -32,24 +32,22 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 dp.middleware.setup(LoggingMiddleware())
 
-
 # -------- Состояния --------
 class Form(StatesGroup):
     waiting_for_client_name = State()
     waiting_for_date = State()
 
-
 # -------- Генерация PDF --------
 def replace_text_in_pdf(client_name: str, date_str: str) -> str:
     doc = fitz.open(TEMPLATE_PATH)
 
-    # --- Замена "Client:" на странице 1 ---
+    # Замена "Client:" на странице 1
     page1 = doc[0]
     for inst in page1.search_for("Client:"):
         page1.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
         page1.insert_text(inst.tl, f"Client: {client_name}", fontsize=12, color=(0, 0, 0))
 
-    # --- Замена даты на странице 5 ---
+    # Замена даты на странице 5
     page5 = doc[4]
     for inst in page5.search_for("Date: 20.05.2025"):
         new_position = fitz.Point(inst.tl.x, inst.tl.y + 5)
@@ -63,14 +61,12 @@ def replace_text_in_pdf(client_name: str, date_str: str) -> str:
 
     return output_path
 
-
 # -------- Обработчики --------
 
 @dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message):
     await message.answer("👋 Привет! Введи имя клиента:", reply_markup=types.ForceReply(selective=True))
     await Form.waiting_for_client_name.set()
-
 
 @dp.message_handler(state=Form.waiting_for_client_name, content_types=types.ContentTypes.TEXT)
 async def handle_client_name(message: types.Message, state: FSMContext):
@@ -87,7 +83,6 @@ async def handle_client_name(message: types.Message, state: FSMContext):
         reply_markup=types.ForceReply(selective=True),
     )
     await Form.waiting_for_date.set()
-
 
 @dp.message_handler(state=Form.waiting_for_date, content_types=types.ContentTypes.TEXT)
 async def handle_date(message: types.Message, state: FSMContext):
@@ -121,17 +116,14 @@ async def handle_date(message: types.Message, state: FSMContext):
     await message.answer("✅ Готово! Введи имя следующего клиента:")
     await Form.waiting_for_client_name.set()
 
-
 @dp.message_handler()
 async def handle_unknown(message: types.Message):
     await message.answer("ℹ️ Напиши /start для начала работы.")
-
 
 # -------- Webhook --------
 async def on_startup(app):
     await bot.set_webhook(WEBHOOK_URL)
     logging.info(f"Webhook установлен: {WEBHOOK_URL}")
-
 
 async def on_shutdown(app):
     logging.warning("Отключение...")
@@ -140,15 +132,12 @@ async def on_shutdown(app):
     await dp.storage.wait_closed()
     logging.warning("Бот остановлен.")
 
-
 # -------- /ping для Uptime Robot --------
 async def health_check(request):
     return web.Response(text="OK")
 
-
 def setup_health_route(app):
     app.router.add_get("/ping", health_check)
-
 
 if __name__ == "__main__":
     app = web.Application()
@@ -156,10 +145,14 @@ if __name__ == "__main__":
 
     # Обработчик webhook для aiogram
     async def handle_webhook(request):
-        update = await request.json()
-        update_obj = types.Update.to_object(update)
-        await dp.process_update(update_obj)
-        return web.Response(text="OK")
+        try:
+            update = await request.json()
+            update_obj = types.Update.to_object(update)
+            await dp.process_update(update_obj)
+            return web.Response(text="OK")
+        except Exception as e:
+            logging.error(f"Error in webhook handler: {e}")
+            return web.Response(status=500, text="Internal Server Error")
 
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
 
