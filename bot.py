@@ -1,122 +1,150 @@
 import os
-import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.utils.executor import start_webhook
-from datetime import datetime
 import pytz
-from pdfrw import PdfReader, PdfWriter, PageMerge
+from datetime import datetime
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.dispatcher import FSMContext
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
-API_TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # Например, https://yourapp.onrender.com
-WEBHOOK_PATH = f'/webhook/{API_TOKEN}'
-WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
+from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
 
-WEBAPP_HOST = '0.0.0.0'
-WEBAPP_PORT = int(os.getenv("PORT", 8000))
+import io
 
-logging.basicConfig(level=logging.INFO)
+# Токен бота из переменной окружения
+API_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not API_TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is not set!")
 
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+dp = Dispatcher(bot, storage=MemoryStorage())
+dp.middleware.setup(LoggingMiddleware())
 
-# Путь к шаблону PDF (положи шаблон рядом с bot.py)
-TEMPLATE_PATH = 'template.pdf'
+# Путь к шаблону PDF (должен быть в проекте рядом с ботом)
+TEMPLATE_PATH = "template.pdf"
 
+# Состояния для FSM
+class Form(StatesGroup):
+    waiting_for_client_name = State()
+    waiting_for_date = State()
 
-def replace_text_on_page(page, old_text, new_text):
-    """
-    Простейшая замена текста в содержимом страницы PDF.
-    В pdfrw нельзя просто так заменить текст, 
-    поэтому тут пример грубой замены в stream (если текст простой).
-    Если надо сложнее — нужна библиотека типа borb, pdfplumber, reportlab.
-    """
-    if not page.Contents:
-        return
-    content = page.Contents.stream
-    if old_text in content:
-        content = content.replace(old_text.encode(), new_text.encode())
-        page.Contents.stream = content
+def get_kiev_time():
+    tz = pytz.timezone("Europe/Kiev")
+    return datetime.now(tz)
 
+def create_overlay(client_name: str, date_str: str):
+    """Создает PDF с измененными текстами client_name и date_str в нужных позициях"""
+    packet = io.BytesIO()
+    can = canvas.Canvas(packet, pagesize=letter)
 
-def generate_pdf(client_name: str, date_str: str) -> str:
-    # Загружаем шаблон
-    pdf = PdfReader(TEMPLATE_PATH)
+    # Координаты и шрифты нужно подстроить под твой шаблон, пример:
+    # Поле Client: примерно в левом верхнем углу
+    can.setFont("Helvetica-Bold", 12)
+    can.drawString(70, 720, f"Client: {client_name}")
 
-    # Первая страница — замена Client:
-    first_page = pdf.pages[0]
-    replace_text_on_page(first_page, b"Client:", f"Client: {client_name}".encode())
+    # Поле Date: примерно справа сверху
+    can.setFont("Helvetica", 12)
+    can.drawString(400, 720, f"Date: {date_str}")
 
-    # Пятая страница (индекс 4) — два раза заменяем Date:
-    fifth_page = pdf.pages[4]
-    replace_text_on_page(fifth_page, b"Date: 20.05.2025", f"Date: {date_str}".encode())
-    replace_text_on_page(fifth_page, b"Date: 20.05.2025", f"Date: {date_str}".encode())
+    can.save()
+    packet.seek(0)
+    return PdfReader(packet)
 
-    # Сохраняем новый файл
-    output_filename = f"{client_name}.pdf"
-    PdfWriter().write(output_filename, pdf)
-    return output_filename
-
+def merge_pdfs(template_path, overlay_pdf):
+    template_pdf = PdfReader(template_path)
+    for page_num in range(len(template_pdf.pages)):
+        overlay_page = overlay_pdf.pages[0]  # накладываем один оверлей на все страницы, если нужно
+        template_page = template_pdf.pages[page_num]
+        if "/Contents" in template_page:
+            contents = template_page.Contents
+            if isinstance(contents, list):
+                contents.append(overlay_page.Contents)
+            else:
+                template_page.Contents = [contents, overlay_page.Contents]
+        else:
+            template_page.Contents = overlay_page.Contents
+    output_stream = io.BytesIO()
+    PdfWriter(output_stream, trailer=template_pdf).write()
+    output_stream.seek(0)
+    return output_stream
 
 @dp.message_handler(commands=['start'])
-async def start(message: types.Message):
-    await message.answer(
-        "Привет! Введи имя клиента и дату через запятую.\n"
-        "Например:\n"
-        "Иван Иванов, 07.06.2025\n"
-        "Или просто имя — дата будет текущая."
-    )
+async def cmd_start(message: types.Message):
+    await message.answer("Привет! Введи имя клиента, чтобы получить готовый PDF.")
+    await Form.waiting_for_client_name.set()
 
-
-@dp.message_handler()
-async def process_input(message: types.Message):
-    text = message.text.strip()
-
-    # Парсим имя и дату
-    if ',' in text:
-        client_name, date_input = map(str.strip, text.split(',', 1))
-    else:
-        client_name = text
-        # Текущая дата по Киеву
-        tz = pytz.timezone('Europe/Kiev')
-        date_input = datetime.now(tz).strftime('%d.%m.%Y')
-
-    await message.answer(f"Генерирую PDF для клиента: {client_name} с датой: {date_input} ...")
-
-    try:
-        pdf_path = generate_pdf(client_name, date_input)
-    except Exception as e:
-        await message.answer(f"Ошибка при генерации PDF: {e}")
+@dp.message_handler(state=Form.waiting_for_client_name)
+async def process_client_name(message: types.Message, state: FSMContext):
+    client_name = message.text.strip()
+    if not client_name:
+        await message.answer("Имя клиента не может быть пустым. Попробуй еще раз.")
         return
 
-    with open(pdf_path, 'rb') as pdf_file:
-        await message.answer_document(pdf_file, caption=f"PDF для {client_name}")
+    # Сохраняем имя клиента
+    await state.update_data(client_name=client_name)
 
-    # Можно удалить файл после отправки, чтобы не засорять диск
+    # Получаем текущее время по Киеву
+    date_str = get_kiev_time().strftime("%d.%m.%Y")
+
+    # Создаем PDF с заменами
     try:
-        os.remove(pdf_path)
-    except Exception:
-        pass
+        overlay_pdf = create_overlay(client_name, date_str)
+        pdf_file = merge_pdfs(TEMPLATE_PATH, overlay_pdf)
+    except Exception as e:
+        await message.answer(f"Ошибка при создании PDF: {e}")
+        await state.finish()
+        return
 
+    await message.answer_document(types.InputFile(pdf_file, filename=f"{client_name}.pdf"), caption=f"Вот PDF для клиента {client_name} с датой {date_str}.")
 
-async def on_startup(dp):
-    await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook установлен: {WEBHOOK_URL}")
+    await message.answer("Если хочешь указать другую дату, введи ее в формате ДД.ММ.ГГГГ, или отправь /skip чтобы оставить текущую.")
+    await Form.waiting_for_date.set()
 
+@dp.message_handler(commands=['skip'], state=Form.waiting_for_date)
+async def skip_date(message: types.Message, state: FSMContext):
+    await message.answer("Хорошо, оставляем текущую дату.")
+    await state.finish()
+    await message.answer("Если хочешь создать еще один PDF, введи имя клиента.")
 
-async def on_shutdown(dp):
-    logging.warning("Shutting down..")
-    await bot.delete_webhook()
-    await bot.session.close()
-    logging.warning("Bye!")
+@dp.message_handler(state=Form.waiting_for_date)
+async def process_date(message: types.Message, state: FSMContext):
+    date_input = message.text.strip()
+    try:
+        # Проверяем корректность формата даты
+        date_obj = datetime.strptime(date_input, "%d.%m.%Y")
+        date_str = date_obj.strftime("%d.%m.%Y")
+    except ValueError:
+        await message.answer("Неверный формат даты! Пожалуйста, введи дату в формате ДД.ММ.ГГГГ или отправь /skip.")
+        return
 
+    data = await state.get_data()
+    client_name = data.get("client_name")
+    if not client_name:
+        await message.answer("Произошла ошибка: имя клиента не найдено. Пожалуйста, начни заново командой /start.")
+        await state.finish()
+        return
+
+    try:
+        overlay_pdf = create_overlay(client_name, date_str)
+        pdf_file = merge_pdfs(TEMPLATE_PATH, overlay_pdf)
+    except Exception as e:
+        await message.answer(f"Ошибка при создании PDF: {e}")
+        await state.finish()
+        return
+
+    await message.answer_document(types.InputFile(pdf_file, filename=f"{client_name}.pdf"), caption=f"PDF для клиента {client_name} с новой датой {date_str}.")
+
+    await state.finish()
+    await message.answer("Если хочешь создать еще один PDF, введи имя клиента.")
+
+@dp.errors_handler()
+async def global_error_handler(update, exception):
+    print(f"Произошла ошибка: {exception}")
+    return True  # ошибка обработана, чтобы бот не крашился
 
 if __name__ == '__main__':
-    start_webhook(
-        dispatcher=dp,
-        webhook_path=WEBHOOK_PATH,
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        skip_updates=True,
-        host=WEBAPP_HOST,
-        port=WEBAPP_PORT,
-    )
+    # Запуск бота
+    executor.start_polling(dp, skip_updates=True)
