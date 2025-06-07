@@ -1,4 +1,5 @@
 aiogram==2.25.1
+pdfplumber==0.11.6
 pdfrw==0.4
 reportlab==4.4.1
 pytz==2025.2
