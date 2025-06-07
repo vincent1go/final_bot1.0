@@ -1,190 +1,137 @@
 import os
-import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
+import pytz
+from datetime import datetime
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
-from datetime import datetime
-import pytz
 
-# Настройка логирования
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Функция для генерации PDF
+def generate_pdf(client_name, date_str):
+    filename = f"{client_name}.pdf"
+    c = canvas.Canvas(filename, pagesize=letter)
+    y = 750  # Начальная позиция по Y
+    line_height = 15  # Высота строки
 
-# Токен берется из переменной окружения
-TOKEN = os.getenv('TOKEN')
+    # Заголовок и информация о компании
+    c.drawString(100, y, "RAFIQ Uziyan")
+    y -= line_height
+    c.drawString(100, y, "Company number: 14593456")
+    y -= line_height
+    c.drawString(100, y, "38 Brockhurst Road, Birmingham, England, B36 8JB")
+    y -= line_height
+    c.drawString(100, y, "https://ur-recruitment.com/")
+    y -= line_height
+    c.drawString(100, y, "UR RECRUITMENT LTD")
+    y -= line_height
+    c.drawString(100, y, "CONTRACT")
+    y -= line_height * 2
 
-# Состояние пользователя
-user_data = {}
+    # Предмет договора
+    c.drawString(100, y, "SUBJECT OF THE AGREEMENT")
+    y -= line_height
+    c.drawString(100, y, "1.1. Pursuant to this Agreement:")
+    y -= line_height
+    c.drawString(100, y, "Contractor - UR RECRUITMENT LTD")
+    y -= line_height
+    c.drawString(100, y, "Company number 14593456, 38 Brockhurst Road, Birmingham, England, B36 8JB")
+    y -= line_height
+    c.drawString(100, y, f"Client: {client_name}")
+    y -= line_height
+    c.drawString(100, y, "The Contractor personally, at its own risk, provides the Client with services listed")
+    y -= line_height
+    c.drawString(100, y, "in paragraph 1.2 of this Agreement (hereinafter referred to as 'Services') within")
+    y -= line_height
+    c.drawString(100, y, "the period agreed by the Parties. The Client accepts the Services provided by")
+    y -= line_height
+    c.drawString(100, y, "the Contractor and pays for the Services within the time, manner, and amount")
+    y -= line_height
+    c.drawString(100, y, "established by this Agreement.")
+    y -= line_height
+    c.drawString(100, y, "1.2. Services provided by the Contractor to the Client in accordance with")
+    y -= line_height
+    c.drawString(100, y, "paragraph 1.1 of this Agreement:")
+    y -= line_height
+    c.drawString(100, y, "1.2.1. Assistance in employment abroad.")
+    y -= line_height * 2
 
-# Шаблон договора (основные данные)
-CONTRACTOR_INFO = """
-UR RECRUITMENT LTD
-Company number: 14593456
-38 Brockhurst Road, Birmingham, England, B36 8JB
-https://ur-recruitment.com/
-"""
+    # Процедура выполнения
+    c.drawString(100, y, "PROCEDURE FOR PERFORMANCE OF THE AGREEMENT")
+    y -= line_height
+    c.drawString(100, y, "2.1. The Contractor collects the information required for the provision of")
+    y -= line_height
+    c.drawString(100, y, "Services through its independent search, selection, systematization, and analysis.")
+    # Добавьте остальной текст аналогично (для краткости опущены дополнительные страницы)
 
-# Функция генерации PDF
-def generate_pdf(client_name, date, filename):
-    try:
-        c = canvas.Canvas(filename, pagesize=letter)
-        y = 750  # Начальная позиция Y
-        line_height = 20
+    # Дата внизу
+    c.drawString(100, 100, f"Date: {date_str}")
+    c.save()
+    return filename
 
-        # Заголовок
-        c.setFont("Helvetica-Bold", 14)
-        c.drawString(100, y, "CONTRACT")
-        y -= line_height * 2
-
-        # Информация о подрядчике
-        c.setFont("Helvetica", 12)
-        for line in CONTRACTOR_INFO.split('\n'):
-            c.drawString(100, y, line.strip())
-            y -= line_height
-
-        # Клиент и дата
-        c.drawString(100, y, f"Client: {client_name}")
-        y -= line_height
-        c.drawString(100, y, f"Date: {date}")
-        y -= line_height * 2
-
-        # Основной текст (сокращен для примера)
-        c.drawString(100, y, "SUBJECT OF THE AGREEMENT")
-        y -= line_height
-        c.drawString(100, y, "1.1. Pursuant to this Agreement:")
-        # Добавьте полный текст договора по необходимости
-
-        c.save()
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка при генерации PDF: {e}")
-        return False
-
-# Стартовая команда
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("Ввести имя клиента", callback_data='input_name')],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        '👋 Привет! Я помогу создать PDF-договор.\nНажми кнопку, чтобы начать!',
-        reply_markup=reply_markup
+# Команда /start
+def start(update: Update, context: CallbackContext) -> None:
+    reply_keyboard = [['📄 Сгенерировать PDF']]
+    update.message.reply_text(
+        '👋 Привет! Я бот для создания PDF-договоров.\n'
+        'Нажми "📄 Сгенерировать PDF", чтобы начать!',
+        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
     )
 
-# Обработка кнопок
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-
-    if query.data == 'input_name':
-        await query.edit_message_text('✍️ Введи имя клиента:')
-        user_data[user_id] = {'step': 'name'}
-    elif query.data == 'set_date':
-        kyiv_tz = pytz.timezone('Europe/Kiev')
-        current_date = datetime.now(kyiv_tz).strftime("%d.%m.%Y")
-        keyboard = [
-            [InlineKeyboardButton(f"Сегодня ({current_date})", callback_data='date_today')],
-            [InlineKeyboardButton("Выбрать другую дату", callback_data='date_custom')],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text('📅 Выбери дату:', reply_markup=reply_markup)
-    elif query.data == 'date_today':
-        kyiv_tz = pytz.timezone('Europe/Kiev')
-        user_data[user_id]['date'] = datetime.now(kyiv_tz).strftime("%d.%m.%Y")
-        await generate_and_send_pdf(query, context, user_id)
-    elif query.data == 'date_custom':
-        await query.edit_message_text('📅 Введи дату в формате ДД.ММ.ГГГГ (например, 15.10.2023):')
-        user_data[user_id]['step'] = 'date'
-
-# Обработка текстовых сообщений
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.message.from_user.id
+# Обработка сообщений
+def handle_message(update: Update, context: CallbackContext) -> None:
     text = update.message.text
+    step = context.user_data.get('step', '')
 
-    if user_id not in user_data or 'step' not in user_data[user_id]:
-        await start(update, context)
-        return
-
-    step = user_data[user_id]['step']
     try:
-        if step == 'name':
-            user_data[user_id]['name'] = text
-            keyboard = [[InlineKeyboardButton("Выбрать дату", callback_data='set_date')]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            await update.message.reply_text(
-                f'✅ Имя клиента: {text}\nТеперь выбери дату:',
-                reply_markup=reply_markup
+        if text == '📄 Сгенерировать PDF':
+            update.message.reply_text(
+                '✍️ Введите имя клиента:',
+                reply_markup=ReplyKeyboardRemove()
             )
-        elif step == 'date':
-            # Проверка формата даты
-            datetime.strptime(text, "%d.%m.%Y")
-            user_data[user_id]['date'] = text
-            await generate_and_send_pdf_from_message(update, context, user_id)
-    except ValueError:
-        await update.message.reply_text('❌ Неверный формат даты! Используй ДД.ММ.ГГГГ (например, 15.10.2023).')
+            context.user_data['step'] = 'waiting_for_name'
+
+        elif step == 'waiting_for_name':
+            context.user_data['client_name'] = text.strip()
+            update.message.reply_text(
+                '📅 Введите дату (ДД.ММ.ГГГГ) или напишите /now для текущей даты по Киеву:'
+            )
+            context.user_data['step'] = 'waiting_for_date'
+
+        elif step == 'waiting_for_date':
+            if text == '/now':
+                tz = pytz.timezone('Europe/Kiev')
+                date_str = datetime.now(tz).strftime('%d.%m.%Y')
+            else:
+                # Простая проверка формата даты
+                try:
+                    datetime.strptime(text, '%d.%m.%Y')
+                    date_str = text
+                except ValueError:
+                    update.message.reply_text('❌ Неверный формат даты! Используйте ДД.ММ.ГГГГ или /now.')
+                    return
+
+            client_name = context.user_data['client_name']
+            update.message.reply_text('⏳ Генерирую PDF...')
+            pdf_filename = generate_pdf(client_name, date_str)
+            with open(pdf_filename, 'rb') as pdf_file:
+                update.message.reply_document(pdf_file, filename=f"{client_name}.pdf")
+            os.remove(pdf_filename)
+            update.message.reply_text('✅ PDF готов! Можете создать ещё один.')
+            context.user_data.clear()
+            start(update, context)
+
     except Exception as e:
-        logger.error(f"Ошибка обработки сообщения: {e}")
-        await update.message.reply_text('❌ Произошла ошибка. Попробуй снова.')
+        update.message.reply_text('⚠️ Произошла ошибка. Попробуйте снова.')
+        start(update, context)
 
-# Генерация и отправка PDF из сообщения
-async def generate_and_send_pdf_from_message(update, context, user_id):
-    client_name = user_data[user_id]['name']
-    date = user_data[user_id]['date']
-    filename = f"{client_name}.pdf"
-    
-    if generate_pdf(client_name, date, filename):
-        with open(filename, 'rb') as file:
-            await update.message.reply_document(file, filename=filename)
-        os.remove(filename)
-        await restart(update, context, user_id)
-    else:
-        await update.message.reply_text('❌ Ошибка при создании PDF. Попробуй снова.')
-
-# Генерация и отправка PDF из callback
-async def generate_and_send_pdf(query, context, user_id):
-    client_name = user_data[user_id]['name']
-    date = user_data[user_id]['date']
-    filename = f"{client_name}.pdf"
-    
-    if generate_pdf(client_name, date, filename):
-        with open(filename, 'rb') as file:
-            await query.message.reply_document(file, filename=filename)
-        os.remove(filename)
-        await restart_from_callback(query, context, user_id)
-    else:
-        await query.edit_message_text('❌ Ошибка при создании PDF. Попробуй снова.')
-
-# Перезапуск после генерации
-async def restart(update, context, user_id):
-    keyboard = [[InlineKeyboardButton("Создать новый PDF", callback_data='input_name')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text('✅ PDF успешно создан! Хочешь создать еще один?', reply_markup=reply_markup)
-    user_data.pop(user_id, None)
-
-async def restart_from_callback(query, context, user_id):
-    keyboard = [[InlineKeyboardButton("Создать новый PDF", callback_data='input_name')]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text('✅ PDF успешно создан! Хочешь создать еще один?', reply_markup=reply_markup)
-    user_data.pop(user_id, None)
-
-# Обработка ошибок
-async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Ошибка: {context.error}")
-    if update and hasattr(update, 'message'):
-        await update.message.reply_text('❌ Произошла ошибка. Попробуй снова с /start.')
-
-def main():
-    try:
-        application = Application.builder().token(TOKEN).build()
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(CallbackQueryHandler(button))
-        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        application.add_error_handler(error_handler)
-        application.run_polling(allowed_updates=Update.ALL_TYPES)
-    except Exception as e:
-        logger.error(f"Критическая ошибка запуска: {e}")
+# Основная функция
+def main() -> None:
+    updater = Updater(os.getenv('TELEGRAM_BOT_TOKEN'))
+    dispatcher = updater.dispatcher
+    dispatcher.add_handler(CommandHandler("start", start))
+    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
     main()
