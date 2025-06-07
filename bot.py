@@ -13,9 +13,9 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 import fitz  # PyMuPDF
 
-# -------- Конфіг --------
+# -------- Конфигурация --------
 API_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # наприклад: https://yourapp.onrender.com
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # например: https://yourapp.onrender.com
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
 PORT = int(os.getenv("PORT", 8000))
@@ -24,37 +24,39 @@ TEMPLATE_PATH = "template.pdf"
 OUTPUT_DIR = "generated"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# -------- Логування --------
+# -------- Логирование --------
 logging.basicConfig(level=logging.INFO)
 
-# -------- Ініціалізація бота --------
+# -------- Инициализация бота --------
 bot = Bot(token=API_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 dp.middleware.setup(LoggingMiddleware())
 
 
-# -------- Стан машини --------
+# -------- Состояния --------
 class Form(StatesGroup):
     waiting_for_client_name = State()
     waiting_for_date = State()
 
 
-# -------- Генерація PDF --------
+# -------- Генерация PDF --------
 def replace_text_in_pdf(client_name: str, date_str: str) -> str:
     doc = fitz.open(TEMPLATE_PATH)
 
-    # --- Заміна "Client:" на сторінці 1 ---
+    # --- Замена "Client:" на странице 1 ---
     page1 = doc[0]
     for inst in page1.search_for("Client:"):
         page1.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
         page1.insert_text(inst.tl, f"Client: {client_name}", fontsize=12, color=(0, 0, 0))
 
-    # --- Заміна дати на сторінці 5 ---
+    # --- Замена даты на странице 5 ---
     page5 = doc[4]
     for inst in page5.search_for("Date: 20.05.2025"):
+        # Смещение вниз на 5 пикселей (в системе координат PDF, где 1 пункт ≈ 1/72 дюйма)
+        new_position = fitz.Point(inst.tl.x, inst.tl.y + 5)
         page5.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
-        page5.insert_text(inst.tl, f"Date: {date_str}", fontsize=12, color=(0, 0, 0))
+        page5.insert_text(new_position, f"Date: {date_str}", fontsize=12, color=(0, 0, 0))
 
     filename = f"{client_name}_{date_str.replace('.', '-')}.pdf"
     output_path = os.path.join(OUTPUT_DIR, filename)
@@ -64,11 +66,11 @@ def replace_text_in_pdf(client_name: str, date_str: str) -> str:
     return output_path
 
 
-# -------- Хендлери --------
+# -------- Обработчики --------
 
 @dp.message_handler(commands=["start"])
 async def cmd_start(message: types.Message):
-    await message.answer("Привіт! Введіть ім’я клієнта:", reply_markup=types.ForceReply(selective=True))
+    await message.answer("👋 Привет! Введи имя клиента:", reply_markup=types.ForceReply(selective=True))
     await Form.waiting_for_client_name.set()
 
 
@@ -76,14 +78,14 @@ async def cmd_start(message: types.Message):
 async def handle_client_name(message: types.Message, state: FSMContext):
     name = message.text.strip()
     if not name:
-        await message.answer("Ім’я не може бути порожнім. Введіть ще раз:")
+        await message.answer("⚠️ Имя не может быть пустым. Введи его ещё раз:")
         return
 
     await state.update_data(client_name=name)
 
     now = datetime.now(pytz.timezone("Europe/Kiev")).strftime("%d.%m.%Y")
     await message.answer(
-        f"Введіть дату у форматі ДД.ММ.РРРР або /today (сьогоднішня: {now}):",
+        f"📅 Введи дату в формате ДД.ММ.ГГГГ или отправь /today (сегодня: {now}):",
         reply_markup=types.ForceReply(selective=True),
     )
     await Form.waiting_for_date.set()
@@ -99,46 +101,46 @@ async def handle_date(message: types.Message, state: FSMContext):
             datetime.strptime(raw_date, "%d.%m.%Y")
             date_str = raw_date
         except ValueError:
-            await message.answer("Невірний формат дати. Введіть у форматі ДД.ММ.РРРР або /today:")
+            await message.answer("❌ Неверный формат даты. Введи в формате ДД.ММ.ГГГГ или /today:")
             return
 
     data = await state.get_data()
     client_name = data.get("client_name")
 
-    await message.answer("Генерую PDF, зачекайте...")
+    await message.answer("🛠 Генерирую PDF, пожалуйста подожди...")
 
     try:
         pdf_path = replace_text_in_pdf(client_name, date_str)
     except Exception as e:
-        logging.error(f"Помилка при генерації PDF: {e}")
-        await message.answer("Сталася помилка при створенні PDF. Спробуйте пізніше.")
+        logging.error(f"Ошибка при генерации PDF: {e}")
+        await message.answer("💥 Произошла ошибка при создании PDF. Попробуй позже.")
         await state.finish()
         return
 
     with open(pdf_path, "rb") as file:
-        await message.answer_document(file, caption=f"{client_name}, дата {date_str}")
+        await message.answer_document(file, caption=f"📄 PDF для {client_name}, дата {date_str}")
 
-    await message.answer("Готово! Введіть ім’я наступного клієнта:")
+    await message.answer("✅ Готово! Введи имя следующего клиента:")
     await Form.waiting_for_client_name.set()
 
 
 @dp.message_handler()
 async def handle_unknown(message: types.Message):
-    await message.answer("Натисніть /start для початку.")
+    await message.answer("ℹ️ Напиши /start для начала работы.")
 
 
 # -------- Webhook --------
 async def on_startup(dp):
     await bot.set_webhook(WEBHOOK_URL)
-    logging.info(f"Webhook встановлено: {WEBHOOK_URL}")
+    logging.info(f"Webhook установлен: {WEBHOOK_URL}")
 
 
 async def on_shutdown(dp):
-    logging.warning("Вимикаємося...")
+    logging.warning("Отключение...")
     await bot.delete_webhook()
     await dp.storage.close()
     await dp.storage.wait_closed()
-    logging.warning("Бот вимкнено.")
+    logging.warning("Бот остановлен.")
 
 
 if __name__ == "__main__":
