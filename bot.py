@@ -5,19 +5,16 @@ import pytz
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.types import ParseMode
-from aiogram.utils.executor import start_webhook
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.dispatcher import FSMContext
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 import fitz  # PyMuPDF
-
 from aiohttp import web
 
 # -------- Конфигурация --------
 API_TOKEN = os.getenv("TELEGRAM_TOKEN")
-WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # например: https://yourapp.onrender.com
 WEBHOOK_PATH = "/webhook"
 WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
 PORT = int(os.getenv("PORT", 8000))
@@ -46,17 +43,18 @@ class Form(StatesGroup):
 def replace_text_in_pdf(client_name: str, date_str: str) -> str:
     doc = fitz.open(TEMPLATE_PATH)
 
-    replacements = {
-        "Client:": f"Client: {client_name}",
-        "Date: 20.05.2025": f"Date: {date_str}",
-    }
+    # --- Замена "Client:" на странице 1 ---
+    page1 = doc[0]
+    for inst in page1.search_for("Client:"):
+        page1.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
+        page1.insert_text(inst.tl, f"Client: {client_name}", fontsize=12, color=(0, 0, 0))
 
-    for page in doc:
-        for key, value in replacements.items():
-            instances = page.search_for(key)
-            for inst in instances:
-                page.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
-                page.insert_text(inst.tl, value, fontsize=12, color=(0, 0, 0))
+    # --- Замена даты на странице 5 ---
+    page5 = doc[4]
+    for inst in page5.search_for("Date: 20.05.2025"):
+        new_position = fitz.Point(inst.tl.x, inst.tl.y + 5)
+        page5.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
+        page5.insert_text(new_position, f"Date: {date_str}", fontsize=12, color=(0, 0, 0))
 
     filename = f"{client_name}_{date_str.replace('.', '-')}.pdf"
     output_path = os.path.join(OUTPUT_DIR, filename)
@@ -143,7 +141,7 @@ async def on_shutdown(dp):
     logging.warning("Бот остановлен.")
 
 
-# -------- /ping --------
+# -------- /ping для Uptime Robot --------
 async def health_check(request):
     return web.Response(text="OK")
 
@@ -152,18 +150,25 @@ def setup_health_route(app):
     app.router.add_get("/ping", health_check)
 
 
-# -------- Запуск --------
 if __name__ == "__main__":
     app = web.Application()
     setup_health_route(app)
 
-    start_webhook(
-        dispatcher=dp,
-        webhook_path=WEBHOOK_PATH,
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        skip_updates=True,
-        host="0.0.0.0",
-        port=PORT,
-        app=app
-    )
+    # Обработчик webhook для aiogram
+    async def handle_webhook(request):
+        update = await request.json()
+        update_obj = types.Update.to_object(update)
+        await dp.process_update(update_obj)
+        return web.Response(text="OK")
+
+    app.router.add_post(WEBHOOK_PATH, handle_webhook)
+
+    app.on_shutdown.append(on_shutdown)
+
+    import asyncio
+
+    async def start():
+        await on_startup(dp)
+        web.run_app(app, host="0.0.0.0", port=PORT)
+
+    asyncio.run(start())
