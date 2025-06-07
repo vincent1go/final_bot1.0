@@ -128,12 +128,12 @@ async def handle_unknown(message: types.Message):
 
 
 # -------- Webhook --------
-async def on_startup(dp):
+async def on_startup(app):
     await bot.set_webhook(WEBHOOK_URL)
     logging.info(f"Webhook установлен: {WEBHOOK_URL}")
 
 
-async def on_shutdown(dp):
+async def on_shutdown(app):
     logging.warning("Отключение...")
     await bot.delete_webhook()
     await dp.storage.close()
@@ -163,12 +163,7 @@ if __name__ == "__main__":
 
     app.router.add_post(WEBHOOK_PATH, handle_webhook)
 
+    app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
 
-    import asyncio
-
-    async def start():
-        await on_startup(dp)
-        web.run_app(app, host="0.0.0.0", port=PORT)
-
-    asyncio.run(start())
+    web.run_app(app, host="0.0.0.0", port=PORT)
