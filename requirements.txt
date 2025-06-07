@@ -1,5 +1,4 @@
 aiogram==2.25.1
-pdfplumber
-pdfrw
-reportlab
-pytz
+pdfrw==0.4
+reportlab==4.4.1
+pytz==2025.2
