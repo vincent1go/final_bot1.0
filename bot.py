@@ -1,137 +1,188 @@
 import os
-import pytz
+import logging
 from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-from reportlab.lib.pagesizes import letter
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils.executor import start_webhook
+from aiogram.types import ParseMode
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+
+from pdfrw import PdfReader, PdfWriter, PageMerge
 from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from io import BytesIO
+import pytz
 
-# Функция для генерации PDF
-def generate_pdf(client_name, date_str):
-    filename = f"{client_name}.pdf"
-    c = canvas.Canvas(filename, pagesize=letter)
-    y = 750  # Начальная позиция по Y
-    line_height = 15  # Высота строки
+# --- Настройка логирования ---
+logging.basicConfig(level=logging.INFO)
 
-    # Заголовок и информация о компании
-    c.drawString(100, y, "RAFIQ Uziyan")
-    y -= line_height
-    c.drawString(100, y, "Company number: 14593456")
-    y -= line_height
-    c.drawString(100, y, "38 Brockhurst Road, Birmingham, England, B36 8JB")
-    y -= line_height
-    c.drawString(100, y, "https://ur-recruitment.com/")
-    y -= line_height
-    c.drawString(100, y, "UR RECRUITMENT LTD")
-    y -= line_height
-    c.drawString(100, y, "CONTRACT")
-    y -= line_height * 2
+# --- Переменные окружения ---
+API_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+if not API_TOKEN:
+    logging.error("TELEGRAM_BOT_TOKEN не установлен в переменных окружения!")
+    exit(1)
 
-    # Предмет договора
-    c.drawString(100, y, "SUBJECT OF THE AGREEMENT")
-    y -= line_height
-    c.drawString(100, y, "1.1. Pursuant to this Agreement:")
-    y -= line_height
-    c.drawString(100, y, "Contractor - UR RECRUITMENT LTD")
-    y -= line_height
-    c.drawString(100, y, "Company number 14593456, 38 Brockhurst Road, Birmingham, England, B36 8JB")
-    y -= line_height
-    c.drawString(100, y, f"Client: {client_name}")
-    y -= line_height
-    c.drawString(100, y, "The Contractor personally, at its own risk, provides the Client with services listed")
-    y -= line_height
-    c.drawString(100, y, "in paragraph 1.2 of this Agreement (hereinafter referred to as 'Services') within")
-    y -= line_height
-    c.drawString(100, y, "the period agreed by the Parties. The Client accepts the Services provided by")
-    y -= line_height
-    c.drawString(100, y, "the Contractor and pays for the Services within the time, manner, and amount")
-    y -= line_height
-    c.drawString(100, y, "established by this Agreement.")
-    y -= line_height
-    c.drawString(100, y, "1.2. Services provided by the Contractor to the Client in accordance with")
-    y -= line_height
-    c.drawString(100, y, "paragraph 1.1 of this Agreement:")
-    y -= line_height
-    c.drawString(100, y, "1.2.1. Assistance in employment abroad.")
-    y -= line_height * 2
+# --- Вебхук URL и порт для Render ---
+WEBHOOK_HOST = os.environ.get("WEBHOOK_HOST")  # Например: https://yourapp.onrender.com
+WEBHOOK_PATH = f"/webhook/{API_TOKEN}"
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
-    # Процедура выполнения
-    c.drawString(100, y, "PROCEDURE FOR PERFORMANCE OF THE AGREEMENT")
-    y -= line_height
-    c.drawString(100, y, "2.1. The Contractor collects the information required for the provision of")
-    y -= line_height
-    c.drawString(100, y, "Services through its independent search, selection, systematization, and analysis.")
-    # Добавьте остальной текст аналогично (для краткости опущены дополнительные страницы)
+# Порт Render даёт в переменной PORT
+PORT = int(os.environ.get("PORT", 8443))
 
-    # Дата внизу
-    c.drawString(100, 100, f"Date: {date_str}")
-    c.save()
-    return filename
+# --- FSM States ---
+class Form(StatesGroup):
+    waiting_for_name = State()
+    waiting_for_date = State()
 
-# Команда /start
-def start(update: Update, context: CallbackContext) -> None:
-    reply_keyboard = [['📄 Сгенерировать PDF']]
-    update.message.reply_text(
-        '👋 Привет! Я бот для создания PDF-договоров.\n'
-        'Нажми "📄 Сгенерировать PDF", чтобы начать!',
-        reply_markup=ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True, resize_keyboard=True)
+# --- Инициализация бота и диспетчера ---
+bot = Bot(token=API_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+
+# --- Путь к шаблону PDF ---
+TEMPLATE_PATH = "template.pdf"  # Загрузите ваш шаблон сюда рядом с кодом
+
+
+# --- Функция для замены текста в PDF ---
+def create_filled_pdf(client_name: str, date_str: str) -> bytes:
+    """
+    Берёт шаблон template.pdf,
+    заменяет в нём текст Client: и Date: на client_name и date_str,
+    возвращает PDF в байтах.
+    """
+    # Читаем шаблон
+    template_pdf = PdfReader(TEMPLATE_PATH)
+    page = template_pdf.pages[0]
+
+    # Создаем слой с белым прямоугольником для удаления старого текста (замазываем)
+    packet = BytesIO()
+    can = canvas.Canvas(packet, pagesize=letter)
+
+    # Позиции текста на странице (пример, подберите под ваш шаблон)
+    # В pdf координаты считаются от нижнего левого угла:
+    client_x = 100
+    client_y = 700
+
+    date_x = 100
+    date_y = 680
+
+    rect_width = 300
+    rect_height = 20
+
+    # Закрашиваем старый текст белым прямоугольником
+    can.setFillColorRGB(1, 1, 1)  # белый
+    can.rect(client_x, client_y - 5, rect_width, rect_height, fill=1, stroke=0)
+    can.rect(date_x, date_y - 5, rect_width, rect_height, fill=1, stroke=0)
+
+    # Добавляем новый текст
+    can.setFillColorRGB(0, 0, 0)  # черный
+    can.setFont("Helvetica-Bold", 12)
+    can.drawString(client_x, client_y, f"Client: {client_name}")
+    can.drawString(date_x, date_y, f"Date: {date_str}")
+
+    can.save()
+
+    # Перемещаемся в начало BytesIO
+    packet.seek(0)
+
+    # Читаем созданный PDF слой
+    new_pdf = PdfReader(packet)
+    overlay = new_pdf.pages[0]
+
+    # Накладываем новый слой поверх шаблона
+    merger = PageMerge(page)
+    merger.add(overlay).render()
+
+    # Сохраняем результат в BytesIO
+    output = BytesIO()
+    PdfWriter(output, trailer=template_pdf).write()
+    return output.getvalue()
+
+# --- Получаем текущую дату по Киеву ---
+def get_current_date_kiev() -> str:
+    tz = pytz.timezone("Europe/Kiev")
+    now = datetime.now(tz)
+    return now.strftime("%d.%m.%Y")
+
+
+# --- Хендлеры бота ---
+
+@dp.message_handler(commands=["start"])
+async def cmd_start(message: types.Message):
+    await message.answer(
+        "Привет! Введите имя клиента, чтобы получить заполненный PDF.\n\n"
+        "Например: Иван Иванов"
     )
+    await Form.waiting_for_name.set()
 
-# Обработка сообщений
-def handle_message(update: Update, context: CallbackContext) -> None:
-    text = update.message.text
-    step = context.user_data.get('step', '')
+
+@dp.message_handler(state=Form.waiting_for_name)
+async def process_name(message: types.Message, state: FSMContext):
+    client_name = message.text.strip()
+    if not client_name:
+        await message.answer("Пожалуйста, введите корректное имя клиента.")
+        return
+
+    await state.update_data(client_name=client_name)
+    await message.answer(
+        "Введите дату в формате ДД.ММ.ГГГГ или отправьте слово 'сейчас' для текущей даты."
+    )
+    await Form.waiting_for_date.set()
+
+
+@dp.message_handler(state=Form.waiting_for_date)
+async def process_date(message: types.Message, state: FSMContext):
+    date_text = message.text.strip()
+    if date_text.lower() == "сейчас":
+        date_str = get_current_date_kiev()
+    else:
+        # Проверяем формат даты
+        try:
+            datetime.strptime(date_text, "%d.%m.%Y")
+            date_str = date_text
+        except ValueError:
+            await message.answer("Неверный формат даты. Введите ДД.ММ.ГГГГ или 'сейчас'.")
+            return
+
+    user_data = await state.get_data()
+    client_name = user_data.get("client_name")
 
     try:
-        if text == '📄 Сгенерировать PDF':
-            update.message.reply_text(
-                '✍️ Введите имя клиента:',
-                reply_markup=ReplyKeyboardRemove()
-            )
-            context.user_data['step'] = 'waiting_for_name'
-
-        elif step == 'waiting_for_name':
-            context.user_data['client_name'] = text.strip()
-            update.message.reply_text(
-                '📅 Введите дату (ДД.ММ.ГГГГ) или напишите /now для текущей даты по Киеву:'
-            )
-            context.user_data['step'] = 'waiting_for_date'
-
-        elif step == 'waiting_for_date':
-            if text == '/now':
-                tz = pytz.timezone('Europe/Kiev')
-                date_str = datetime.now(tz).strftime('%d.%m.%Y')
-            else:
-                # Простая проверка формата даты
-                try:
-                    datetime.strptime(text, '%d.%m.%Y')
-                    date_str = text
-                except ValueError:
-                    update.message.reply_text('❌ Неверный формат даты! Используйте ДД.ММ.ГГГГ или /now.')
-                    return
-
-            client_name = context.user_data['client_name']
-            update.message.reply_text('⏳ Генерирую PDF...')
-            pdf_filename = generate_pdf(client_name, date_str)
-            with open(pdf_filename, 'rb') as pdf_file:
-                update.message.reply_document(pdf_file, filename=f"{client_name}.pdf")
-            os.remove(pdf_filename)
-            update.message.reply_text('✅ PDF готов! Можете создать ещё один.')
-            context.user_data.clear()
-            start(update, context)
-
+        pdf_bytes = create_filled_pdf(client_name, date_str)
     except Exception as e:
-        update.message.reply_text('⚠️ Произошла ошибка. Попробуйте снова.')
-        start(update, context)
+        logging.exception("Ошибка при создании PDF")
+        await message.answer("Произошла ошибка при создании PDF. Попробуйте позже.")
+        await state.finish()
+        return
 
-# Основная функция
-def main() -> None:
-    updater = Updater(os.getenv('TELEGRAM_BOT_TOKEN'))
-    dispatcher = updater.dispatcher
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
-    updater.start_polling()
-    updater.idle()
+    # Отправляем файл пользователю
+    file_name = f"{client_name}.pdf"
+    await message.answer_document(document=pdf_bytes, filename=file_name)
 
-if __name__ == '__main__':
-    main()
+    # Готовы к следующему клиенту
+    await message.answer("Введите имя следующего клиента или /start для начала.")
+    await Form.waiting_for_name.set()
+
+
+# --- Настройка вебхука для Render ---
+
+async def on_startup(dp):
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info(f"Webhook установлен: {WEBHOOK_URL}")
+
+async def on_shutdown(dp):
+    logging.info("Шатдаун")
+
+# --- Запуск ---
+if __name__ == "__main__":
+    start_webhook(
+        dispatcher=dp,
+        webhook_path=WEBHOOK_PATH,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=True,
+        host="0.0.0.0",
+        port=PORT,
+    )
