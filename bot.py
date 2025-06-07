@@ -13,6 +13,8 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 
 import fitz  # PyMuPDF
 
+from aiohttp import web  # <-- для /ping
+
 # -------- Конфигурация --------
 API_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # например: https://yourapp.onrender.com
@@ -53,7 +55,6 @@ def replace_text_in_pdf(client_name: str, date_str: str) -> str:
     # --- Замена даты на странице 5 ---
     page5 = doc[4]
     for inst in page5.search_for("Date: 20.05.2025"):
-        # Смещение вниз на 5 пикселей (в системе координат PDF, где 1 пункт ≈ 1/72 дюйма)
         new_position = fitz.Point(inst.tl.x, inst.tl.y + 5)
         page5.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
         page5.insert_text(new_position, f"Date: {date_str}", fontsize=12, color=(0, 0, 0))
@@ -143,7 +144,20 @@ async def on_shutdown(dp):
     logging.warning("Бот остановлен.")
 
 
+# -------- /ping для Uptime Robot --------
+async def health_check(request):
+    return web.Response(text="OK")
+
+
+def setup_health_route(app):
+    app.router.add_get("/ping", health_check)
+
+
+# -------- Запуск --------
 if __name__ == "__main__":
+    app = web.Application()
+    setup_health_route(app)
+
     start_webhook(
         dispatcher=dp,
         webhook_path=WEBHOOK_PATH,
@@ -152,4 +166,5 @@ if __name__ == "__main__":
         skip_updates=True,
         host="0.0.0.0",
         port=PORT,
+        app=app  # 👈 важно!
     )
