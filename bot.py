@@ -1,156 +1,185 @@
 import os
 import logging
-from aiogram import Bot, Dispatcher, types, executor
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from datetime import datetime
 import pytz
-from pdfrw import PdfReader, PdfWriter
 
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.types import ParseMode
+from aiogram.utils.executor import start_webhook
+
+import fitz  # PyMuPDF
+
+# -------- НАСТРОЙКИ --------
+API_TOKEN = os.getenv("TELEGRAM_TOKEN")
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")  # Например: https://yourapp.onrender.com
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = WEBHOOK_HOST + WEBHOOK_PATH
+PORT = int(os.getenv("PORT", 8000))
+
+# Путь к шаблону
+TEMPLATE_PATH = "template.pdf"
+OUTPUT_DIR = "generated"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Логирование
 logging.basicConfig(level=logging.INFO)
-
-API_TOKEN = os.getenv('BOT_TOKEN')
-if not API_TOKEN:
-    raise RuntimeError("BOT_TOKEN не найден в переменных окружения")
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
+dp.middleware.setup(LoggingMiddleware())
 
-# Путь к шаблону PDF (загрузите на Render рядом с ботом)
-PDF_TEMPLATE_PATH = 'template.pdf'
+# ---- Работа с состояниями (FSM) ----
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
 
-# Ключи состояний для хранения данных между сообщениями
-USER_DATA = {}
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
 
-# Функция для замены текста в PDF контенте страницы (очень упрощенный пример)
-def replace_text_in_pdf(input_path, output_path, client_name, date_str):
-    pdf = PdfReader(input_path)
-    # Первая страница - меняем Client:
-    page1 = pdf.pages[0]
-    content1 = page1.Contents.stream
-    # Заменим "Client:" на "Client: {client_name}"
-    # Предположим, что в шаблоне "Client:" в точности так написано
-    content1 = content1.replace(b'Client:', f'Client: {client_name}'.encode('utf-8'))
-    page1.Contents.stream = content1
 
-    # Пятая страница (индекс 4) - меняем два раза дату
-    page5 = pdf.pages[4]
-    content5 = page5.Contents.stream
-    # Заменяем все вхождения "Date: 20.05.2025" на "Date: {date_str}"
-    content5 = content5.replace(b'Date: 20.05.2025', f'Date: {date_str}'.encode('utf-8'))
-    page5.Contents.stream = content5
+class Form(StatesGroup):
+    waiting_for_client_name = State()
+    waiting_for_date = State()
 
-    PdfWriter(output_path, trailer=pdf).write()
 
-# Хэндлер /start
+# ---- Функции для работы с PDF ----
+def replace_text_in_pdf(client_name: str, date_str: str) -> str:
+    """
+    Заменить текст в PDF: 
+    - На 1 странице: 'Client:' -> 'Client: <client_name>'
+    - На 5 странице (две даты): 'Date: 20.05.2025' -> 'Date: <date_str>'
+    Возвращает путь к сгенерированному PDF.
+    """
+
+    doc = fitz.open(TEMPLATE_PATH)
+
+    # 1 страница: меняем client
+    page1 = doc[0]
+    # Удаляем старый текст Client: (стираем прямоугольник, где он был)
+    # Т.к. координаты не даем, пробуем найти текст и очистить область вокруг него.
+
+    # Найдем все вхождения "Client:"
+    for inst in page1.search_for("Client:"):
+        # Стираем прямоугольник (заливка белым)
+        page1.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
+
+        # Пишем новый текст вместо Client: <client_name>
+        # Ставим текст в ту же позицию с тем же размером
+        page1.insert_text(inst.tl, f"Client: {client_name}", fontsize=12, color=(0, 0, 0))
+
+    # 5 страница: меняем дату 2 раза
+    page5 = doc[4]
+
+    for inst in page5.search_for("Date: 20.05.2025"):
+        page5.draw_rect(inst, color=(1, 1, 1), fill=(1, 1, 1))
+        page5.insert_text(inst.tl, f"Date: {date_str}", fontsize=12, color=(0, 0, 0))
+
+    # Сохраняем файл
+    output_pdf = os.path.join(OUTPUT_DIR, f"{client_name}_{date_str.replace('.', '-')}.pdf")
+    doc.save(output_pdf)
+    doc.close()
+
+    return output_pdf
+
+
+# ---- Хэндлеры ----
+
 @dp.message_handler(commands=['start'])
-async def start_handler(message: types.Message):
+async def cmd_start(message: types.Message):
     await message.answer(
-        "Привет! Введите имя клиента, чтобы получить PDF с заполненным шаблоном."
+        "Привет! Я бот для генерации PDF.\n"
+        "Введите имя клиента:",
+        reply_markup=types.ForceReply(selective=True),
     )
+    await Form.waiting_for_client_name.set()
 
-# Принимаем имя клиента
-@dp.message_handler(lambda message: message.text and message.text.strip() != '')
-async def client_name_handler(message: types.Message):
+
+@dp.message_handler(state=Form.waiting_for_client_name, content_types=types.ContentTypes.TEXT)
+async def process_client_name(message: types.Message, state: FSMContext):
     client_name = message.text.strip()
-    USER_DATA[message.from_user.id] = {'client_name': client_name}
-
-    # Получаем текущую дату по Киеву
-    tz = pytz.timezone('Europe/Kiev')
-    now = datetime.now(tz)
-    date_str = now.strftime('%d.%m.%Y')
-    USER_DATA[message.from_user.id]['date'] = date_str
-
-    # Спрашиваем пользователя, менять ли дату
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    keyboard.add(KeyboardButton('Использовать текущую дату'))
-    keyboard.add(KeyboardButton('Ввести дату вручную'))
-
-    await message.answer(
-        f"Имя клиента: {client_name}\n"
-        f"Дата по умолчанию: {date_str}\n"
-        f"Хотите использовать эту дату или ввести свою?",
-        reply_markup=keyboard
-    )
-
-# Обработка ответа на выбор даты
-@dp.message_handler(lambda message: message.text in ['Использовать текущую дату', 'Ввести дату вручную'])
-async def date_choice_handler(message: types.Message):
-    if message.text == 'Использовать текущую дату':
-        user_id = message.from_user.id
-        data = USER_DATA.get(user_id)
-        if not data:
-            await message.answer("Сначала введите имя клиента /start")
-            return
-
-        # Генерируем и отправляем PDF
-        await generate_and_send_pdf(message, data['client_name'], data['date'])
-        await message.answer("Готово! Введите имя следующего клиента.", reply_markup=ReplyKeyboardRemove())
-        USER_DATA.pop(user_id, None)
-
-    else:
-        # Запрашиваем дату в формате ДД.ММ.ГГГГ
-        await message.answer("Введите дату в формате ДД.ММ.ГГГГ (например, 20.05.2025):")
-
-        # Помечаем, что сейчас ждем дату
-        USER_DATA[message.from_user.id]['await_date'] = True
-
-# Принимаем дату от пользователя
-@dp.message_handler(lambda message: True)
-async def date_input_handler(message: types.Message):
-    user_id = message.from_user.id
-    data = USER_DATA.get(user_id)
-    if data and data.get('await_date'):
-        date_text = message.text.strip()
-
-        # Проверяем формат даты
-        try:
-            datetime.strptime(date_text, '%d.%m.%Y')
-        except ValueError:
-            await message.answer("Неверный формат даты. Попробуйте снова в формате ДД.ММ.ГГГГ:")
-            return
-
-        # Сохраняем дату и удаляем ожидание
-        data['date'] = date_text
-        data.pop('await_date')
-
-        # Генерируем и отправляем PDF
-        await generate_and_send_pdf(message, data['client_name'], data['date'])
-        await message.answer("Готово! Введите имя следующего клиента.", reply_markup=ReplyKeyboardRemove())
-        USER_DATA.pop(user_id, None)
+    if not client_name:
+        await message.answer("Имя клиента не может быть пустым. Введите имя еще раз:")
         return
 
-    # Если не ждем дату, значит пользователь вводит новое имя клиента
-    client_name = message.text.strip()
-    USER_DATA[user_id] = {'client_name': client_name}
+    await state.update_data(client_name=client_name)
 
-    # Получаем текущую дату по Киеву
-    tz = pytz.timezone('Europe/Kiev')
-    now = datetime.now(tz)
-    date_str = now.strftime('%d.%m.%Y')
-    USER_DATA[user_id]['date'] = date_str
-
-    keyboard = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True)
-    keyboard.add(KeyboardButton('Использовать текущую дату'))
-    keyboard.add(KeyboardButton('Ввести дату вручную'))
+    # Предлагаем ввести дату или использовать текущую по Киеву
+    tz = pytz.timezone("Europe/Kiev")
+    now_kiev = datetime.now(tz).strftime("%d.%m.%Y")
 
     await message.answer(
-        f"Имя клиента: {client_name}\n"
-        f"Дата по умолчанию: {date_str}\n"
-        f"Хотите использовать эту дату или ввести свою?",
-        reply_markup=keyboard
+        f"Введите дату в формате ДД.ММ.ГГГГ или отправьте /today, чтобы использовать текущую дату ({now_kiev}):",
+        reply_markup=types.ForceReply(selective=True),
     )
+    await Form.waiting_for_date.set()
 
-async def generate_and_send_pdf(message, client_name, date_str):
-    user_id = message.from_user.id
-    out_path = f'temp_{user_id}.pdf'
+
+@dp.message_handler(state=Form.waiting_for_date, content_types=types.ContentTypes.TEXT)
+async def process_date(message: types.Message, state: FSMContext):
+    date_text = message.text.strip()
+
+    # Специальная команда /today для текущей даты
+    if date_text.lower() == "/today":
+        tz = pytz.timezone("Europe/Kiev")
+        date_text = datetime.now(tz).strftime("%d.%m.%Y")
+
+    # Проверка формата даты
     try:
-        replace_text_in_pdf(PDF_TEMPLATE_PATH, out_path, client_name, date_str)
-        # Отправляем файл
-        with open(out_path, 'rb') as f:
-            await message.answer_document(f, caption=f"PDF для клиента: {client_name}\nДата: {date_str}")
+        datetime.strptime(date_text, "%d.%m.%Y")
+    except ValueError:
+        await message.answer("Неверный формат даты. Введите в формате ДД.ММ.ГГГГ или /today:")
+        return
+
+    user_data = await state.get_data()
+    client_name = user_data.get("client_name")
+
+    # Генерируем PDF
+    await message.answer("Генерирую PDF, подождите...")
+
+    try:
+        output_pdf = replace_text_in_pdf(client_name, date_text)
     except Exception as e:
         logging.error(f"Ошибка при генерации PDF: {e}")
-        await message.answer("Произошла ошибка при генерации PDF. Попробуйте снова позже.")
+        await message.answer("Произошла ошибка при генерации PDF. Попробуйте позже.")
+        await state.finish()
+        return
+
+    # Отправляем файл
+    with open(output_pdf, "rb") as f:
+        await message.answer_document(f, caption=f"PDF для клиента {client_name}, дата {date_text}")
+
+    await message.answer("Готово! Введите имя следующего клиента:")
+
+    await Form.waiting_for_client_name.set()
+
+
+@dp.message_handler()
+async def fallback(message: types.Message):
+    await message.answer("Введите /start для начала работы с ботом.")
+
+
+# --- Webhook settings для Render ---
+
+async def on_startup(dp):
+    await bot.set_webhook(WEBHOOK_URL)
+    logging.info(f"Webhook установлен на {WEBHOOK_URL}")
+
+async def on_shutdown(dp):
+    logging.warning("Shutting down..")
+    await bot.delete_webhook()
+    await dp.storage.close()
+    await dp.storage.wait_closed()
+    logging.warning("Shutdown complete.")
+
 
 if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+    start_webhook(
+        dispatcher=dp,
+        webhook_path=WEBHOOK_PATH,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=True,
+        host="0.0.0.0",
+        port=PORT,
+    )
